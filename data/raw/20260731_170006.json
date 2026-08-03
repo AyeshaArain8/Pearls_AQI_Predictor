@@ -1,0 +1,77 @@
+{
+    "timestamp": "2026-07-31T17:00:06.800244",
+    "city": "Lahore",
+    "latitude": "31.5204",
+    "longitude": "74.3587",
+    "air_pollution": {
+        "coord": {
+            "lon": 74.3587,
+            "lat": 31.5204
+        },
+        "list": [
+            {
+                "main": {
+                    "aqi": 3
+                },
+                "components": {
+                    "co": 437.01,
+                    "no": 0.12,
+                    "no2": 8.53,
+                    "o3": 66.05,
+                    "so2": 3.3,
+                    "pm2_5": 25.44,
+                    "pm10": 27.05,
+                    "nh3": 7.21
+                },
+                "dt": 1785499202
+            }
+        ]
+    },
+    "weather": {
+        "coord": {
+            "lon": 74.3587,
+            "lat": 31.5204
+        },
+        "weather": [
+            {
+                "id": 500,
+                "main": "Rain",
+                "description": "light rain",
+                "icon": "10d"
+            }
+        ],
+        "base": "stations",
+        "main": {
+            "temp": 34.47,
+            "feels_like": 40.57,
+            "temp_min": 34.47,
+            "temp_max": 34.47,
+            "pressure": 997,
+            "humidity": 53,
+            "sea_level": 997,
+            "grnd_level": 974
+        },
+        "visibility": 10000,
+        "wind": {
+            "speed": 4.39,
+            "deg": 79,
+            "gust": 5.21
+        },
+        "rain": {
+            "1h": 0.14
+        },
+        "clouds": {
+            "all": 87
+        },
+        "dt": 1785499152,
+        "sys": {
+            "country": "PK",
+            "sunrise": 1785457067,
+            "sunset": 1785506400
+        },
+        "timezone": 18000,
+        "id": 1347925,
+        "name": "Lahore Cantonment",
+        "cod": 200
+    }
+}

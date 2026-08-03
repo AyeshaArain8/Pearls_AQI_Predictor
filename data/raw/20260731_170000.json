@@ -1,0 +1,74 @@
+{
+    "timestamp": "2026-07-31T17:00:00.626060",
+    "city": "Karachi",
+    "latitude": "24.8607",
+    "longitude": "67.0011",
+    "air_pollution": {
+        "coord": {
+            "lon": 67.0011,
+            "lat": 24.8607
+        },
+        "list": [
+            {
+                "main": {
+                    "aqi": 4
+                },
+                "components": {
+                    "co": 71.91,
+                    "no": 0.01,
+                    "no2": 0.1,
+                    "o3": 38.27,
+                    "so2": 0.61,
+                    "pm2_5": 28.89,
+                    "pm10": 124.43,
+                    "nh3": 0
+                },
+                "dt": 1785499194
+            }
+        ]
+    },
+    "weather": {
+        "coord": {
+            "lon": 66.9983,
+            "lat": 24.8591
+        },
+        "weather": [
+            {
+                "id": 804,
+                "main": "Clouds",
+                "description": "overcast clouds",
+                "icon": "04d"
+            }
+        ],
+        "base": "stations",
+        "main": {
+            "temp": 29.92,
+            "feels_like": 36.34,
+            "temp_min": 29.92,
+            "temp_max": 29.92,
+            "pressure": 995,
+            "humidity": 76,
+            "sea_level": 995,
+            "grnd_level": 993
+        },
+        "visibility": 10000,
+        "wind": {
+            "speed": 6.93,
+            "deg": 235,
+            "gust": 6.29
+        },
+        "clouds": {
+            "all": 100
+        },
+        "dt": 1785498850,
+        "sys": {
+            "country": "PK",
+            "sunrise": 1785459546,
+            "sunset": 1785507453
+        },
+        "timezone": 18000,
+        "id": 1174872,
+        "name": "Karachi",
+        "cod": 200
+    }
+}
