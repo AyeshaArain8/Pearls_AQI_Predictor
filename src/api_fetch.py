@@ -1,61 +1,172 @@
 import os
 import requests
+
 from dotenv import load_dotenv
 
 
-# Load .env file
-load_dotenv()
+# =====================================================
+# LOAD ENVIRONMENT VARIABLES
+# =====================================================
 
+load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
 
-
-# ======================================================
-# Fetch Air Pollution + Weather Data
-# ======================================================
-
-def get_city_data(city, latitude, longitude):
-
-    if not API_KEY:
-        raise ValueError("API_KEY not found in .env file")
-
-
-    # Air Pollution API
-
-    pollution_url = (
-        "https://api.openweathermap.org/data/2.5/air_pollution"
-        f"?lat={latitude}&lon={longitude}&appid={API_KEY}"
+if not API_KEY:
+    raise ValueError(
+        "API_KEY is missing from .env file."
     )
+
+
+# =====================================================
+# OPENWEATHER API URLS
+# =====================================================
+
+AIR_POLLUTION_URL = (
+    "https://api.openweathermap.org/data/2.5/air_pollution"
+)
+
+WEATHER_URL = (
+    "https://api.openweathermap.org/data/2.5/weather"
+)
+
+
+# =====================================================
+# GET CITY DATA
+# =====================================================
+
+def get_city_data(
+    city,
+    latitude,
+    longitude
+):
+
+    # =================================================
+    # AIR POLLUTION DATA
+    # =================================================
+
+    pollution_params = {
+
+        "lat": latitude,
+
+        "lon": longitude,
+
+        "appid": API_KEY
+
+    }
 
 
     pollution_response = requests.get(
-        pollution_url
+        AIR_POLLUTION_URL,
+        params=pollution_params,
+        timeout=15
     )
+
+
+    pollution_response.raise_for_status()
+
 
     pollution_data = pollution_response.json()
 
 
+    if not pollution_data.get("list"):
 
-    # Weather API
-
-    weather_url = (
-        "https://api.openweathermap.org/data/2.5/weather"
-        f"?lat={latitude}&lon={longitude}&appid={API_KEY}&units=metric"
-    )
-
-
-    weather_response = requests.get(
-        weather_url
-    )
-
-    weather_data = weather_response.json()
-
+        raise ValueError(
+            "No air pollution data returned from OpenWeather."
+        )
 
 
     pollution = pollution_data["list"][0]
 
 
+    components = pollution.get(
+        "components",
+        {}
+    )
+
+
+    openweather_aqi = pollution.get(
+        "main",
+        {}
+    ).get(
+        "aqi",
+        1
+    )
+
+
+    # =================================================
+    # WEATHER DATA
+    # =================================================
+
+    weather_params = {
+
+        "lat": latitude,
+
+        "lon": longitude,
+
+        "appid": API_KEY,
+
+        "units": "metric"
+
+    }
+
+
+    weather_response = requests.get(
+        WEATHER_URL,
+        params=weather_params,
+        timeout=15
+    )
+
+
+    weather_response.raise_for_status()
+
+
+    weather_data = weather_response.json()
+
+
+    # =================================================
+    # WEATHER VALUES
+    # =================================================
+
+    main_data = weather_data.get(
+        "main",
+        {}
+    )
+
+
+    wind_data = weather_data.get(
+        "wind",
+        {}
+    )
+
+
+    weather_list = weather_data.get(
+        "weather",
+        []
+    )
+
+
+    if weather_list:
+
+        weather_description = weather_list[0].get(
+            "description",
+            "Unknown"
+        )
+
+    else:
+
+        weather_description = "Unknown"
+
+
+    # =================================================
+    # RETURN DATA
+    # =================================================
+
     return {
+
+        # ---------------------------------------------
+        # LOCATION
+        # ---------------------------------------------
 
         "city": city,
 
@@ -64,37 +175,102 @@ def get_city_data(city, latitude, longitude):
         "longitude": longitude,
 
 
-        "pm10": pollution["components"]["pm10"],
+        # ---------------------------------------------
+        # AIR POLLUTION
+        # ---------------------------------------------
 
-        "pm2_5": pollution["components"]["pm2_5"],
+        "pm10": float(
+            components.get(
+                "pm10",
+                0
+            )
+        ),
 
-        "carbon_monoxide": pollution["components"]["co"],
+        "pm2_5": float(
+            components.get(
+                "pm2_5",
+                0
+            )
+        ),
 
-        "nitrogen_dioxide": pollution["components"]["no2"],
+        "carbon_monoxide": float(
+            components.get(
+                "co",
+                0
+            )
+        ),
 
-        "sulphur_dioxide": pollution["components"]["so2"],
+        "nitrogen_dioxide": float(
+            components.get(
+                "no2",
+                0
+            )
+        ),
 
-        "ozone": pollution["components"]["o3"],
+        "sulphur_dioxide": float(
+            components.get(
+                "so2",
+                0
+            )
+        ),
+
+        "ozone": float(
+            components.get(
+                "o3",
+                0
+            )
+        ),
 
 
-        "temperature": weather_data["main"]["temp"],
+        # ---------------------------------------------
+        # ADDITIONAL MODEL FEATURES
+        # ---------------------------------------------
+        # OpenWeather air-pollution endpoint does not
+        # provide these values in the same response.
+        # Safe defaults are therefore used.
+        # ---------------------------------------------
 
-        "humidity": weather_data["main"]["humidity"],
+        "aerosol_optical_depth": 0.30,
 
-        "wind_speed": weather_data["wind"]["speed"],
+        "dust": 5.0,
 
-        "weather": weather_data["weather"][0]["description"],
+        "uv_index": 4.0,
 
-        "openweather_aqi": pollution["main"]["aqi"]
+
+        # ---------------------------------------------
+        # OPENWEATHER AQI
+        # ---------------------------------------------
+
+        "openweather_aqi": int(
+            openweather_aqi
+        ),
+
+
+        # ---------------------------------------------
+        # WEATHER
+        # ---------------------------------------------
+
+        "temperature": float(
+            main_data.get(
+                "temp",
+                0
+            )
+        ),
+
+        "humidity": int(
+            main_data.get(
+                "humidity",
+                0
+            )
+        ),
+
+        "wind_speed": float(
+            wind_data.get(
+                "speed",
+                0
+            )
+        ),
+
+        "weather": weather_description
 
     }
-
-if __name__ == "__main__":
-
-    data = get_city_data(
-        "Karachi",
-        24.8607,
-        67.0011
-    )
-
-    print(data)

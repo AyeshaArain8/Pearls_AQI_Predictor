@@ -1,8 +1,9 @@
 import joblib
 import pandas as pd
 
+
 # =====================================================
-# Load Models
+# LOAD TRAINED MODELS
 # =====================================================
 
 day1_model = joblib.load("models/day1_model.pkl")
@@ -11,7 +12,7 @@ day3_model = joblib.load("models/day3_model.pkl")
 
 
 # =====================================================
-# AQI Category
+# AQI CATEGORY
 # =====================================================
 
 def get_category(aqi):
@@ -36,7 +37,7 @@ def get_category(aqi):
 
 
 # =====================================================
-# Forecast Function
+# FORECAST FUNCTION
 # =====================================================
 
 def forecast_aqi(
@@ -55,8 +56,9 @@ def forecast_aqi(
     current_aqi
 ):
 
-    # ---------- Estimated Previous AQI ----------
-    # (Used because historical AQI is not available from user)
+    # =================================================
+    # AQI LAG FEATURES
+    # =================================================
 
     aqi_lag1 = current_aqi
 
@@ -64,42 +66,115 @@ def forecast_aqi(
 
     aqi_lag3 = max(current_aqi - 15, 0)
 
+
+    # =================================================
+    # ROLLING AQI MEAN
+    # =================================================
+
     aqi_rolling_mean = (
-        aqi_lag1 +
-        aqi_lag2 +
-        aqi_lag3
+        aqi_lag1
+        + aqi_lag2
+        + aqi_lag3
     ) / 3
 
-    # ---------- Model Features ----------
+
+    # =================================================
+    # MODEL FEATURES
+    # =================================================
 
     features = pd.DataFrame([{
 
         "pm10": pm10,
+
         "pm2_5": pm2_5,
+
         "carbon_monoxide": carbon_monoxide,
+
         "nitrogen_dioxide": nitrogen_dioxide,
+
         "sulphur_dioxide": sulphur_dioxide,
+
         "ozone": ozone,
+
         "aerosol_optical_depth": aerosol_optical_depth,
+
         "dust": dust,
+
         "uv_index": uv_index,
 
         "month": month,
+
         "day": day,
+
         "day_of_week": day_of_week,
 
         "aqi_lag1": aqi_lag1,
+
         "aqi_lag2": aqi_lag2,
+
         "aqi_lag3": aqi_lag3,
+
         "aqi_rolling_mean": aqi_rolling_mean
 
     }])
 
-    # ---------- Predictions ----------
 
-    tomorrow = round(float(day1_model.predict(features)[0]), 1)
-    day2 = round(float(day2_model.predict(features)[0]), 1)
-    day3 = round(float(day3_model.predict(features)[0]), 1)
+    # =================================================
+    # EXACT FEATURE ORDER USED DURING TRAINING
+    # =================================================
+
+    feature_order = [
+
+        "pm10",
+        "pm2_5",
+        "carbon_monoxide",
+        "nitrogen_dioxide",
+        "sulphur_dioxide",
+        "ozone",
+        "aerosol_optical_depth",
+        "dust",
+        "uv_index",
+        "month",
+        "day",
+        "day_of_week",
+        "aqi_lag1",
+        "aqi_lag2",
+        "aqi_lag3",
+        "aqi_rolling_mean"
+
+    ]
+
+
+    # =================================================
+    # APPLY FEATURE ORDER
+    # =================================================
+
+    features = features[feature_order]
+
+
+    # =================================================
+    # PREDICTIONS
+    # =================================================
+
+    tomorrow = round(
+        float(day1_model.predict(features)[0]),
+        1
+    )
+
+    day2 = round(
+        float(day2_model.predict(features)[0]),
+        1
+    )
+
+    day3 = round(
+        float(day3_model.predict(features)[0]),
+        1
+    )
+
+
+    # =================================================
+    # RETURN FORECAST
+    # =================================================
 
     return {
 
@@ -122,7 +197,7 @@ def forecast_aqi(
 
 
 # =====================================================
-# Testing
+# TESTING
 # =====================================================
 
 if __name__ == "__main__":
@@ -140,11 +215,58 @@ if __name__ == "__main__":
         uv_index=3,
 
         month=8,
-        day=1,
-        day_of_week=5,
+        day=4,
+        day_of_week=1,
 
         current_aqi=75
 
     )
 
-    print(prediction)
+
+    print("\n" + "=" * 60)
+    print("AQI FORECAST TEST")
+    print("=" * 60)
+
+
+    print("\nTomorrow:")
+
+    print(
+        "AQI:",
+        prediction["Tomorrow"]["AQI"]
+    )
+
+    print(
+        "Category:",
+        prediction["Tomorrow"]["Category"]
+    )
+
+
+    print("\nDay 2:")
+
+    print(
+        "AQI:",
+        prediction["Day 2"]["AQI"]
+    )
+
+    print(
+        "Category:",
+        prediction["Day 2"]["Category"]
+    )
+
+
+    print("\nDay 3:")
+
+    print(
+        "AQI:",
+        prediction["Day 3"]["AQI"]
+    )
+
+    print(
+        "Category:",
+        prediction["Day 3"]["Category"]
+    )
+
+
+    print("\n" + "=" * 60)
+    print("Prediction Test Completed")
+    print("=" * 60)
