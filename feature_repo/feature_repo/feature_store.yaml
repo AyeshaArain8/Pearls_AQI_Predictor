@@ -11,5 +11,5 @@ online_store:
   database: postgres
   db_schema: public
   user: postgres.hopgvusevzdnswqmgypl
-  password: ayeshaarain29847
+  password: ${SUPABASE_DB_PASSWORD}
   sslmode: require
