@@ -2,6 +2,8 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
+import mlflow
+import mlflow.sklearn
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -13,6 +15,23 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score
 )
+
+
+# =====================================================
+# MLFLOW CONFIGURATION
+# =====================================================
+
+MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+MLFLOW_EXPERIMENT_NAME = "Pearls_AQI_Lahore_Forecasting"
+
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+print("=" * 60)
+print("MLflow Tracking Configured")
+print("Tracking URI:", MLFLOW_TRACKING_URI)
+print("Experiment:", MLFLOW_EXPERIMENT_NAME)
+print("=" * 60)
 
 
 # =====================================================
@@ -222,11 +241,9 @@ for target in targets.values():
 
 before_cleaning = len(df)
 
-
 df = df.dropna(
     subset=required_columns
 ).copy()
-
 
 after_cleaning = len(df)
 
@@ -316,156 +333,271 @@ for model_name, target in targets.items():
 
     print("=" * 60)
 
-
     # -------------------------------------------------
-    # TARGET
-    # -------------------------------------------------
-
-    y = df[target].copy()
-
-
-    print(
-        "Training rows:",
-        len(X)
-    )
-
-
-    # -------------------------------------------------
-    # TRAIN / TEST SPLIT
+    # START MLFLOW RUN
     # -------------------------------------------------
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.20,
-        random_state=42
-    )
+    with mlflow.start_run(
+        run_name=f"Lahore_{model_name}_RandomForest"
+    ):
+
+        # -------------------------------------------------
+        # TARGET
+        # -------------------------------------------------
+
+        y = df[target].copy()
+
+        print(
+            "Training rows:",
+            len(X)
+        )
 
 
-    print(
-        "Training set:",
-        len(X_train)
-    )
+        # -------------------------------------------------
+        # TRAIN / TEST SPLIT
+        # -------------------------------------------------
 
-    print(
-        "Testing set:",
-        len(X_test)
-    )
+        X_train, X_test, y_train, y_test = train_test_split(
+            X,
+            y,
+            test_size=0.20,
+            random_state=42
+        )
 
+        print(
+            "Training set:",
+            len(X_train)
+        )
 
-    # -------------------------------------------------
-    # RANDOM FOREST MODEL
-    # -------------------------------------------------
-
-    model = RandomForestRegressor(
-        n_estimators=500,
-        max_depth=20,
-        min_samples_split=5,
-        min_samples_leaf=2,
-        random_state=42,
-        n_jobs=-1
-    )
+        print(
+            "Testing set:",
+            len(X_test)
+        )
 
 
-    # -------------------------------------------------
-    # TRAIN MODEL
-    # -------------------------------------------------
+        # -------------------------------------------------
+        # RANDOM FOREST PARAMETERS
+        # -------------------------------------------------
 
-    model.fit(
-        X_train,
-        y_train
-    )
-
-
-    # -------------------------------------------------
-    # PREDICTIONS
-    # -------------------------------------------------
-
-    predictions = model.predict(
-        X_test
-    )
+        n_estimators = 500
+        max_depth = 20
+        min_samples_split = 5
+        min_samples_leaf = 2
+        random_state = 42
 
 
-    # -------------------------------------------------
-    # EVALUATION
-    # -------------------------------------------------
+        # -------------------------------------------------
+        # LOG PARAMETERS TO MLFLOW
+        # -------------------------------------------------
 
-    mae = mean_absolute_error(
-        y_test,
-        predictions
-    )
+        mlflow.log_params({
 
-    rmse = np.sqrt(
-        mean_squared_error(
+            "city": "Lahore",
+
+            "city_code": 3,
+
+            "forecast_day": model_name,
+
+            "target": target,
+
+            "n_features": len(feature_columns),
+
+            "n_estimators": n_estimators,
+
+            "max_depth": max_depth,
+
+            "min_samples_split": min_samples_split,
+
+            "min_samples_leaf": min_samples_leaf,
+
+            "random_state": random_state,
+
+            "test_size": 0.20,
+
+            "training_rows": len(X_train),
+
+            "testing_rows": len(X_test)
+
+        })
+
+
+        # -------------------------------------------------
+        # RANDOM FOREST MODEL
+        # -------------------------------------------------
+
+        model = RandomForestRegressor(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            random_state=random_state,
+            n_jobs=-1
+        )
+
+
+        # -------------------------------------------------
+        # TRAIN MODEL
+        # -------------------------------------------------
+
+        model.fit(
+            X_train,
+            y_train
+        )
+
+
+        # -------------------------------------------------
+        # PREDICTIONS
+        # -------------------------------------------------
+
+        predictions = model.predict(
+            X_test
+        )
+
+
+        # -------------------------------------------------
+        # EVALUATION
+        # -------------------------------------------------
+
+        mae = mean_absolute_error(
             y_test,
             predictions
         )
-    )
 
-    r2 = r2_score(
-        y_test,
-        predictions
-    )
+        rmse = np.sqrt(
+            mean_squared_error(
+                y_test,
+                predictions
+            )
+        )
 
-
-    print(
-        f"MAE  : {mae:.3f}"
-    )
-
-    print(
-        f"RMSE : {rmse:.3f}"
-    )
-
-    print(
-        f"R2   : {r2:.3f}"
-    )
+        r2 = r2_score(
+            y_test,
+            predictions
+        )
 
 
-    # -------------------------------------------------
-    # SAVE MODEL
-    # -------------------------------------------------
+        print(
+            f"MAE  : {mae:.3f}"
+        )
 
-    model_path = (
-        f"models/{model_name}_model.pkl"
-    )
+        print(
+            f"RMSE : {rmse:.3f}"
+        )
 
-
-    joblib.dump(
-        model,
-        model_path
-    )
+        print(
+            f"R2   : {r2:.3f}"
+        )
 
 
-    print(
-        "\nModel Saved:",
-        model_path
-    )
+        # -------------------------------------------------
+        # LOG METRICS TO MLFLOW
+        # -------------------------------------------------
+
+        mlflow.log_metrics({
+
+            "MAE": mae,
+
+            "RMSE": rmse,
+
+            "R2": r2
+
+        })
 
 
-    # -------------------------------------------------
-    # FEATURE IMPORTANCE
-    # -------------------------------------------------
+        # -------------------------------------------------
+        # SAVE MODEL LOCALLY
+        # -------------------------------------------------
 
-    importance = pd.DataFrame({
+        model_path = (
+            f"models/{model_name}_model.pkl"
+        )
 
-        "Feature": feature_columns,
+        joblib.dump(
+            model,
+            model_path
+        )
 
-        "Importance": model.feature_importances_
-
-    })
-
-
-    importance = importance.sort_values(
-        by="Importance",
-        ascending=False
-    )
+        print(
+            "\nModel Saved:",
+            model_path
+        )
 
 
-    print("\nFeature Importance:")
+        # -------------------------------------------------
+        # LOG MODEL TO MLFLOW
+        # -------------------------------------------------
 
-    print(
-        importance.to_string(index=False)
-    )
+        mlflow.sklearn.log_model(
+            sk_model=model,
+            name="model"
+        )
+
+        print(
+            "Model logged to MLflow successfully."
+        )
+
+
+        # -------------------------------------------------
+        # FEATURE IMPORTANCE
+        # -------------------------------------------------
+
+        importance = pd.DataFrame({
+
+            "Feature": feature_columns,
+
+            "Importance": model.feature_importances_
+
+        })
+
+
+        importance = importance.sort_values(
+            by="Importance",
+            ascending=False
+        )
+
+
+        print("\nFeature Importance:")
+
+        print(
+            importance.to_string(index=False)
+        )
+
+
+        # -------------------------------------------------
+        # LOG FEATURE IMPORTANCE TO MLFLOW
+        # -------------------------------------------------
+
+        mlflow.log_text(
+            importance.to_csv(index=False),
+            "feature_importance.csv"
+        )
+
+
+        # -------------------------------------------------
+        # LOG TAGS TO MLFLOW
+        # -------------------------------------------------
+
+        mlflow.set_tags({
+
+            "project": "Pearls_AQI_Predictor",
+
+            "city": "Lahore",
+
+            "model_type": "RandomForestRegressor",
+
+            "feature_store": "Supabase",
+
+            "data_source": "Supabase aqi_features",
+
+            "forecast_horizon": model_name
+
+        })
+
+
+        print(
+            "Metrics, parameters, feature importance, "
+            "and model logged to MLflow."
+        )
 
 
 # =====================================================
@@ -492,4 +624,18 @@ print(
 
 print(
     "models/day3_model.pkl"
+)
+
+print("\nMLflow experiment:")
+
+print(
+    MLFLOW_EXPERIMENT_NAME
+)
+
+print(
+    "\nOpen MLflow Dashboard:"
+)
+
+print(
+    MLFLOW_TRACKING_URI
 )

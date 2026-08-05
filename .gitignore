@@ -21,3 +21,7 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+# MLflow local files
+mlflow.db
+mlartifacts/
+

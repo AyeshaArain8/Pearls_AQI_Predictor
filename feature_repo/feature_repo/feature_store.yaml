@@ -1,0 +1,15 @@
+project: feature_repo
+
+registry: data/registry.db
+
+provider: local
+
+online_store:
+  type: postgres
+  host: aws-0-ap-southeast-2.pooler.supabase.com
+  port: 5432
+  database: postgres
+  db_schema: public
+  user: postgres.hopgvusevzdnswqmgypl
+  password: ayeshaarain29847
+  sslmode: require
