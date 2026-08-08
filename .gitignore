@@ -1,5 +1,6 @@
 # Virtual Environment
 venv/
+.verification-venv/
 
 # Python cache
 __pycache__/

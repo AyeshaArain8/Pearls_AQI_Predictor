@@ -1,118 +1,20 @@
-import os
-import pandas as pd
+"""Compatibility entry point for building canonical training features.
 
-# =====================================================
-# Load Historical Dataset
-# =====================================================
+Use this instead of the retired AOD/dust/UV preprocessing flow.
+"""
+from pathlib import Path
+import sys
 
-DATA_PATH = "data/historical/air_quality_historical.csv"
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from src.feature_contract import make_feature_rows
+from src.feature_store import load_observations
 
-df = pd.read_csv(DATA_PATH)
+def main():
+    rows = make_feature_rows(load_observations(), include_targets=True)
+    output = ROOT / "data" / "processed" / "forecast_dataset.csv"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    rows.to_csv(output, index=False)
+    print(f"Wrote {len(rows)} canonical Lahore training rows to {output}")
 
-print("=" * 60)
-print("Historical Dataset Loaded Successfully")
-print("=" * 60)
-print(df.head())
-
-# =====================================================
-# Remove Missing Values
-# =====================================================
-
-df = df.dropna().reset_index(drop=True)
-
-print("\nMissing Values Removed")
-print("Dataset Shape:", df.shape)
-
-# =====================================================
-# Convert Date
-# =====================================================
-
-df["date"] = pd.to_datetime(df["date"])
-
-# =====================================================
-# Date Features
-# =====================================================
-
-df["year"] = df["date"].dt.year
-df["month"] = df["date"].dt.month
-df["day"] = df["date"].dt.day
-df["day_of_week"] = df["date"].dt.dayofweek
-
-# =====================================================
-# Lag Features (NEW)
-# =====================================================
-
-df["aqi_lag1"] = df["us_aqi"].shift(1)
-df["aqi_lag2"] = df["us_aqi"].shift(2)
-df["aqi_lag3"] = df["us_aqi"].shift(3)
-
-df["aqi_rolling_mean"] = (
-    df["us_aqi"]
-    .rolling(window=3)
-    .mean()
-)
-
-# Remove NaN rows created by lag features
-df = df.dropna().reset_index(drop=True)
-
-# =====================================================
-# Forecast Targets
-# =====================================================
-
-df["day1_target"] = df["us_aqi"].shift(-1)
-df["day2_target"] = df["us_aqi"].shift(-2)
-df["day3_target"] = df["us_aqi"].shift(-3)
-
-# Remove last rows
-df = df.dropna().reset_index(drop=True)
-
-# =====================================================
-# Final Dataset
-# =====================================================
-
-forecast_df = df[
-    [
-        "pm10",
-        "pm2_5",
-        "carbon_monoxide",
-        "nitrogen_dioxide",
-        "sulphur_dioxide",
-        "ozone",
-        "aerosol_optical_depth",
-        "dust",
-        "uv_index",
-        "year",
-        "month",
-        "day",
-        "day_of_week",
-
-        # Lag Features
-        "aqi_lag1",
-        "aqi_lag2",
-        "aqi_lag3",
-        "aqi_rolling_mean",
-
-        # Targets
-        "day1_target",
-        "day2_target",
-        "day3_target"
-    ]
-]
-
-# =====================================================
-# Save Dataset
-# =====================================================
-
-os.makedirs("data/processed", exist_ok=True)
-
-OUTPUT_PATH = "data/processed/forecast_dataset.csv"
-
-forecast_df.to_csv(
-    OUTPUT_PATH,
-    index=False
-)
-
-print("\nForecast Dataset Created Successfully")
-print(forecast_df.head())
-print("\nDataset Shape:", forecast_df.shape)
-print(f"\nSaved To : {OUTPUT_PATH}")
+if __name__ == "__main__": main()

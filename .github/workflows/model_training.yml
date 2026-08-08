@@ -6,6 +6,9 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   train_model:
 
@@ -19,7 +22,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install Dependencies
         run: |
@@ -34,4 +37,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trained-models
-          path: models/
+          path: models/registry/
+
+      - name: Persist approved Model Registry
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add models/registry/
+          git diff --cached --quiet || git commit -m "model: register Lahore forecast version"
+          git push

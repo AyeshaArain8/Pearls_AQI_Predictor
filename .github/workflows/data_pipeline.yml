@@ -7,6 +7,9 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   data_pipeline:
 
@@ -29,13 +32,10 @@ jobs:
 
       - name: Create .env
         run: |
-          echo "API_KEY=${{ secrets.API_KEY }}" > .env
+          test -n "${{ secrets.OPENWEATHER_API_KEY }}" || { echo "OPENWEATHER_API_KEY secret is required"; exit 1; }
+          echo "OPENWEATHER_API_KEY=${{ secrets.OPENWEATHER_API_KEY }}" > .env
 
       - name: Fetch Live AQI Data
-        run: |
-          python src/api_fetch.py
-
-      - name: Generate Features
         run: |
           python src/feature_pipeline.py
 
@@ -43,4 +43,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: processed-data
-          path: data/processed/
+          path: data/feature_store/
+
+      - name: Persist Lahore Feature Store
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/feature_store/
+          git diff --cached --quiet || git commit -m "data: update Lahore feature store"
+          git push

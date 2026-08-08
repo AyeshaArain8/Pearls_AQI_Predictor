@@ -1,272 +1,33 @@
-import joblib
+"""Lahore-only inference using registered models and real feature-store history."""
+from __future__ import annotations
+from datetime import timedelta
+from pathlib import Path
+import sys
 import pandas as pd
 
-
-# =====================================================
-# LOAD TRAINED MODELS
-# =====================================================
-
-day1_model = joblib.load("models/day1_model.pkl")
-day2_model = joblib.load("models/day2_model.pkl")
-day3_model = joblib.load("models/day3_model.pkl")
-
-
-# =====================================================
-# AQI CATEGORY
-# =====================================================
-
-def get_category(aqi):
-
-    if aqi <= 50:
-        return "🟢 Good"
-
-    elif aqi <= 100:
-        return "🟡 Moderate"
-
-    elif aqi <= 150:
-        return "🟠 Unhealthy for Sensitive Groups"
-
-    elif aqi <= 200:
-        return "🔴 Unhealthy"
-
-    elif aqi <= 300:
-        return "🟣 Very Unhealthy"
-
-    else:
-        return "⚫ Hazardous"
-
-
-# =====================================================
-# FORECAST FUNCTION
-# =====================================================
-
-def forecast_aqi(
-    pm10,
-    pm2_5,
-    carbon_monoxide,
-    nitrogen_dioxide,
-    sulphur_dioxide,
-    ozone,
-    aerosol_optical_depth,
-    dust,
-    uv_index,
-    month,
-    day,
-    day_of_week,
-    current_aqi
-):
-
-    # =================================================
-    # AQI LAG FEATURES
-    # =================================================
-
-    aqi_lag1 = current_aqi
-
-    aqi_lag2 = max(current_aqi - 8, 0)
-
-    aqi_lag3 = max(current_aqi - 15, 0)
-
-
-    # =================================================
-    # ROLLING AQI MEAN
-    # =================================================
-
-    aqi_rolling_mean = (
-        aqi_lag1
-        + aqi_lag2
-        + aqi_lag3
-    ) / 3
-
-
-    # =================================================
-    # MODEL FEATURES
-    # =================================================
-
-    features = pd.DataFrame([{
-
-        "pm10": pm10,
-
-        "pm2_5": pm2_5,
-
-        "carbon_monoxide": carbon_monoxide,
-
-        "nitrogen_dioxide": nitrogen_dioxide,
-
-        "sulphur_dioxide": sulphur_dioxide,
-
-        "ozone": ozone,
-
-        "aerosol_optical_depth": aerosol_optical_depth,
-
-        "dust": dust,
-
-        "uv_index": uv_index,
-
-        "month": month,
-
-        "day": day,
-
-        "day_of_week": day_of_week,
-
-        "aqi_lag1": aqi_lag1,
-
-        "aqi_lag2": aqi_lag2,
-
-        "aqi_lag3": aqi_lag3,
-
-        "aqi_rolling_mean": aqi_rolling_mean
-
-    }])
-
-
-    # =================================================
-    # EXACT FEATURE ORDER USED DURING TRAINING
-    # =================================================
-
-    feature_order = [
-
-        "pm10",
-        "pm2_5",
-        "carbon_monoxide",
-        "nitrogen_dioxide",
-        "sulphur_dioxide",
-        "ozone",
-        "aerosol_optical_depth",
-        "dust",
-        "uv_index",
-        "month",
-        "day",
-        "day_of_week",
-        "aqi_lag1",
-        "aqi_lag2",
-        "aqi_lag3",
-        "aqi_rolling_mean"
-
-    ]
-
-
-    # =================================================
-    # APPLY FEATURE ORDER
-    # =================================================
-
-    features = features[feature_order]
-
-
-    # =================================================
-    # PREDICTIONS
-    # =================================================
-
-    tomorrow = round(
-        float(day1_model.predict(features)[0]),
-        1
-    )
-
-    day2 = round(
-        float(day2_model.predict(features)[0]),
-        1
-    )
-
-    day3 = round(
-        float(day3_model.predict(features)[0]),
-        1
-    )
-
-
-    # =================================================
-    # RETURN FORECAST
-    # =================================================
-
-    return {
-
-        "Tomorrow": {
-            "AQI": tomorrow,
-            "Category": get_category(tomorrow)
-        },
-
-        "Day 2": {
-            "AQI": day2,
-            "Category": get_category(day2)
-        },
-
-        "Day 3": {
-            "AQI": day3,
-            "Category": get_category(day3)
-        }
-
-    }
-
-
-# =====================================================
-# TESTING
-# =====================================================
-
-if __name__ == "__main__":
-
-    prediction = forecast_aqi(
-
-        pm10=40,
-        pm2_5=20,
-        carbon_monoxide=500,
-        nitrogen_dioxide=18,
-        sulphur_dioxide=6,
-        ozone=50,
-        aerosol_optical_depth=0.25,
-        dust=4,
-        uv_index=3,
-
-        month=8,
-        day=4,
-        day_of_week=1,
-
-        current_aqi=75
-
-    )
-
-
-    print("\n" + "=" * 60)
-    print("AQI FORECAST TEST")
-    print("=" * 60)
-
-
-    print("\nTomorrow:")
-
-    print(
-        "AQI:",
-        prediction["Tomorrow"]["AQI"]
-    )
-
-    print(
-        "Category:",
-        prediction["Tomorrow"]["Category"]
-    )
-
-
-    print("\nDay 2:")
-
-    print(
-        "AQI:",
-        prediction["Day 2"]["AQI"]
-    )
-
-    print(
-        "Category:",
-        prediction["Day 2"]["Category"]
-    )
-
-
-    print("\nDay 3:")
-
-    print(
-        "AQI:",
-        prediction["Day 3"]["AQI"]
-    )
-
-    print(
-        "Category:",
-        prediction["Day 3"]["Category"]
-    )
-
-
-    print("\n" + "=" * 60)
-    print("Prediction Test Completed")
-    print("=" * 60)
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from src.feature_contract import FEATURE_COLUMNS, LAHORE, SCHEMA_VERSION, assert_feature_schema, latest_serving_features
+from src.feature_store import load_observations
+from src.model_registry import load_latest
+
+AQI_THRESHOLDS = ((50, "Good"), (100, "Moderate"), (150, "Unhealthy for Sensitive Groups"), (200, "Unhealthy"), (300, "Very Unhealthy"), (float("inf"), "Hazardous"))
+
+def get_category(aqi: float) -> str:
+    return next(label for limit, label in AQI_THRESHOLDS if aqi <= limit)
+
+def forecast_aqi(live_observation: dict) -> dict:
+    if live_observation.get("city", "Lahore") != "Lahore":
+        raise ValueError("Pearls AQI Predictor supports Lahore only.")
+    models, metadata = load_latest()
+    if metadata.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError("Registered model schema is incompatible with the serving feature contract.")
+    assert_feature_schema(metadata.get("feature_columns", []))
+    features = latest_serving_features(load_observations(), live_observation)
+    assert_feature_schema(features.columns)
+    observed_at = pd.to_datetime(live_observation["timestamp"], utc=True)
+    forecasts = []
+    for index, horizon in enumerate(("day1", "day2", "day3"), 1):
+        aqi = round(float(models[horizon].predict(features)[0]), 1)
+        forecasts.append({"date": (observed_at + timedelta(days=index)).date().isoformat(), "aqi": aqi, "category": get_category(aqi), "hazardous": aqi > 300})
+    return {"city": "Lahore", "model_version": metadata["version"], "observed_at": observed_at.isoformat(), "forecasts": forecasts, "metrics": metadata.get("metrics", {}), "features": features.iloc[0].to_dict()}

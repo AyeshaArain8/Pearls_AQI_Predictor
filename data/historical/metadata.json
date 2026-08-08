@@ -1,0 +1,8 @@
+{
+  "dataset": "air_quality_historical.csv",
+  "geographic_scope": null,
+  "lahore_verified": false,
+  "provenance": null,
+  "verification_required": "Set geographic_scope to 'Lahore, Pakistan', lahore_verified to true, and record the original source URL or documented source before using this file to initialize or train a production Lahore model.",
+  "notes": "The repository does not contain evidence establishing this CSV's city. This metadata intentionally does not claim Lahore provenance."
+}
