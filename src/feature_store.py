@@ -1,75 +1,85 @@
-"""Small local feature store; portable, free, and deliberately explicit."""
+"""Cloud-only Feast access layer. No local feature data fallback exists."""
 from __future__ import annotations
-
-import json
+import os
 from pathlib import Path
 import pandas as pd
+from sqlalchemy import create_engine, text
 
-from src.feature_contract import LAHORE, RAW_FEATURES, validate_observations
+from src.feature_contract import FEATURE_COLUMNS, LAHORE, RAW_FEATURES, make_feature_rows, validate_observations
 
 ROOT = Path(__file__).resolve().parents[1]
-STORE_PATH = ROOT / "data" / "feature_store" / "lahore_observations.csv"
-METADATA_PATH = ROOT / "data" / "feature_store" / "schema.json"
-HISTORICAL_METADATA_PATH = ROOT / "data" / "historical" / "metadata.json"
+FEAST_REPO = ROOT / "feature_repo" / "feature_repo"
+TABLE = "aqi_observations"
+VIEW = "lahore_aqi_features"
 
+def require_cloud_configuration() -> None:
+    required = ["FEAST_POSTGRES_URL", "FEAST_POSTGRES_HOST", "FEAST_POSTGRES_PORT", "FEAST_POSTGRES_DATABASE", "FEAST_POSTGRES_SCHEMA", "FEAST_POSTGRES_USER", "FEAST_POSTGRES_PASSWORD"]
+    missing = [key for key in required if not os.getenv(key)]
+    if missing:
+        raise RuntimeError(f"Cloud Feast configuration missing: {', '.join(missing)}")
+    if "supabase" in os.environ["FEAST_POSTGRES_HOST"].lower():
+        raise RuntimeError("Supabase is not an approved Feature Store backend for this project.")
 
-def initialise_from_historical(historical_csv: Path | None = None) -> pd.DataFrame:
-    source = historical_csv or ROOT / "data" / "historical" / "air_quality_historical.csv"
-    provenance = _historical_provenance()
-    if provenance.get("geographic_scope") != "Lahore, Pakistan" or provenance.get("lahore_verified") is not True or not provenance.get("provenance"):
-        raise ValueError(
-            "Historical dataset provenance is not verified for Lahore. "
-            "Update data/historical/metadata.json with an auditable Lahore source before training."
-        )
-    raw = pd.read_csv(source)
-    raw = raw.rename(columns={"date": "timestamp", "us_aqi": "aqi"})
-    raw["timestamp"] = pd.to_datetime(raw.timestamp, utc=True)
-    rows = raw[["timestamp", "aqi", *RAW_FEATURES]].dropna().sort_values("timestamp")
-    rows = rows.drop_duplicates("timestamp").reset_index(drop=True)
-    return _write(rows)
+def cloud_engine():
+    require_cloud_configuration()
+    return create_engine(os.environ["FEAST_POSTGRES_URL"], pool_pre_ping=True)
 
+def feast_store():
+    require_cloud_configuration()
+    from feast import FeatureStore
+    return FeatureStore(repo_path=str(FEAST_REPO))
 
-def _write(observations: pd.DataFrame, *, source: str = "verified historical Lahore dataset") -> pd.DataFrame:
-    checked = validate_observations(observations)
-    STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    save = checked.copy()
-    save["timestamp"] = save.timestamp.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    save.to_csv(STORE_PATH, index=False)
-    metadata = {"city": LAHORE, "observation_columns": ["timestamp", "aqi", *RAW_FEATURES], "source": source}
-    if source == "verified historical Lahore dataset":
-        metadata["historical_provenance"] = _historical_provenance()
-    METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return checked
+def _raw_cloud_observations() -> pd.DataFrame:
+    schema = os.getenv("FEAST_POSTGRES_SCHEMA", "public")
+    query = text(f'SELECT event_timestamp AS timestamp, aqi, {", ".join(RAW_FEATURES)} FROM {schema}.{TABLE} WHERE city = :city ORDER BY event_timestamp')
+    with cloud_engine().connect() as connection:
+        frame = pd.read_sql(query, connection, params={"city": LAHORE["name"]})
+    return validate_observations(frame) if not frame.empty else frame
 
+def ingest_observation(observation: dict) -> pd.DataFrame:
+    """Persist a Lahore observation remotely, then materialize it into Feast online serving."""
+    if observation.get("city") != LAHORE["name"]:
+        raise ValueError("Only Lahore observations may enter the Feature Store.")
+    history = _raw_cloud_observations()
+    candidate = pd.DataFrame([{key: observation[key] for key in ["timestamp", "aqi", *RAW_FEATURES]}])
+    combined = pd.concat([history, candidate], ignore_index=True).drop_duplicates("timestamp", keep="last").sort_values("timestamp")
+    combined = validate_observations(combined).reset_index(drop=True)
+    derived = make_feature_rows(combined, include_targets=False)
+    row = candidate.copy().rename(columns={"timestamp": "event_timestamp"})
+    row["created_timestamp"] = pd.Timestamp.now(tz="UTC")
+    row["city"] = LAHORE["name"]
+    # Keep a stable remote table schema even before enough history exists for lags.
+    for column in FEATURE_COLUMNS:
+        if column not in row:
+            row[column] = None
+    if not derived.empty:
+        latest = derived.iloc[-1]
+        if pd.to_datetime(latest["timestamp"], utc=True) == pd.to_datetime(row.event_timestamp.iloc[0], utc=True):
+            for column in FEATURE_COLUMNS:
+                row[column] = latest[column]
+    with cloud_engine().begin() as connection:
+        row.to_sql(TABLE, connection, schema=os.environ["FEAST_POSTGRES_SCHEMA"], if_exists="append", index=False, method="multi")
+    store = feast_store()
+    store.materialize_incremental(end_date=pd.Timestamp.now(tz="UTC").to_pydatetime())
+    return row
 
-def load_observations() -> pd.DataFrame:
-    if not STORE_PATH.exists():
-        raise FileNotFoundError("Feature Store is empty. Run the hourly feature pipeline until it has enough real Lahore observations.")
-    if not METADATA_PATH.exists():
-        raise ValueError("Feature Store metadata is missing; refusing to use data of unknown city/provenance.")
-    metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
-    if metadata.get("city") != LAHORE or metadata.get("source") not in {"verified historical Lahore dataset", "OpenWeather Lahore live observations"}:
-        raise ValueError("Feature Store city/provenance is not approved for Lahore serving.")
-    rows = pd.read_csv(STORE_PATH)
-    return validate_observations(rows)
+def historical_features() -> pd.DataFrame:
+    """Retrieve cloud historical values through Feast's point-in-time API for training."""
+    timestamps = _raw_cloud_observations()[["timestamp"]]
+    if timestamps.empty:
+        return pd.DataFrame()
+    entities = timestamps.rename(columns={"timestamp": "event_timestamp"})
+    entities["city"] = LAHORE["name"]
+    fields = [f"{VIEW}:aqi"] + [f"{VIEW}:{name}" for name in RAW_FEATURES]
+    output = feast_store().get_historical_features(entity_df=entities, features=fields).to_df()
+    output = output.rename(columns={"event_timestamp": "timestamp"})
+    return validate_observations(output[["timestamp", "aqi", *RAW_FEATURES]].sort_values("timestamp"))
 
-
-def assert_lahore_training_data() -> None:
-    """Training must not use historical data whose Lahore provenance is unknown."""
-    provenance = _historical_provenance()
-    if provenance.get("geographic_scope") != "Lahore, Pakistan" or provenance.get("lahore_verified") is not True or not provenance.get("provenance"):
-        raise ValueError("Training blocked: historical AQI geography is unverified. See data/historical/metadata.json.")
-
-
-def _historical_provenance() -> dict:
-    return json.loads(HISTORICAL_METADATA_PATH.read_text(encoding="utf-8"))
-
-
-def append_observation(observation: dict) -> pd.DataFrame:
-    candidate = pd.DataFrame([observation])
-    if not STORE_PATH.exists():
-        return _write(candidate, source="OpenWeather Lahore live observations")
-    existing = load_observations()
-    combined = pd.concat([existing, candidate], ignore_index=True).sort_values("timestamp")
-    combined = combined.drop_duplicates("timestamp", keep="last").reset_index(drop=True)
-    return _write(combined, source="OpenWeather Lahore live observations")
+def latest_online_features() -> pd.DataFrame:
+    """Retrieve the latest serving vector from the remote Feast online store."""
+    fields = [f"{VIEW}:{name}" for name in FEATURE_COLUMNS]
+    values = feast_store().get_online_features(features=fields, entity_rows=[{"city": LAHORE["name"]}]).to_dict()
+    frame = pd.DataFrame({name: values.get(name, [None])[0] for name in FEATURE_COLUMNS}, index=[0])
+    if frame.isna().any(axis=None):
+        raise ValueError("Feast online store has insufficient real history to serve all lag features.")
+    return frame.loc[:, FEATURE_COLUMNS]

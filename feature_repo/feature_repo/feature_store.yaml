@@ -1,15 +1,24 @@
-project: feature_repo
-
-registry: data/registry.db
-
+project: pearls_lahore_aqi
 provider: local
-
+registry:
+  registry_type: sql
+  path: ${FEAST_POSTGRES_URL}
+  cache_ttl_seconds: 60
+offline_store:
+  type: postgres
+  host: ${FEAST_POSTGRES_HOST}
+  port: ${FEAST_POSTGRES_PORT}
+  database: ${FEAST_POSTGRES_DATABASE}
+  db_schema: ${FEAST_POSTGRES_SCHEMA}
+  user: ${FEAST_POSTGRES_USER}
+  password: ${FEAST_POSTGRES_PASSWORD}
+  sslmode: require
 online_store:
   type: postgres
-  host: aws-0-ap-southeast-2.pooler.supabase.com
-  port: 5432
-  database: postgres
-  db_schema: public
-  user: postgres.hopgvusevzdnswqmgypl
-  password: ${SUPABASE_DB_PASSWORD}
+  host: ${FEAST_POSTGRES_HOST}
+  port: ${FEAST_POSTGRES_PORT}
+  database: ${FEAST_POSTGRES_DATABASE}
+  db_schema: ${FEAST_POSTGRES_SCHEMA}
+  user: ${FEAST_POSTGRES_USER}
+  password: ${FEAST_POSTGRES_PASSWORD}
   sslmode: require

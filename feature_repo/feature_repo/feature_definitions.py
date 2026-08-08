@@ -1,60 +1,30 @@
+"""Production Feast definitions for Lahore AQI, backed by cloud PostgreSQL."""
 from datetime import timedelta
 
-from feast import Entity, FeatureView, Field, FileSource
-from feast.types import Float32, Int64, String
+from feast import Entity, FeatureView, Field
+from feast.infra.offline_stores.contrib.postgres_offline_store.postgres_source import PostgreSQLSource
+from feast.types import Float32, Int64
 from feast.value_type import ValueType
 
+from src.feature_contract import FEATURE_COLUMNS, RAW_FEATURES
 
-# Entity
-aqi = Entity(
-    name="aqi_id",
-    join_keys=["aqi_id"],
-    value_type=ValueType.INT64,
+lahore = Entity(name="city", join_keys=["city"], value_type=ValueType.STRING)
+
+lahore_source = PostgreSQLSource(
+    name="lahore_aqi_observations_source",
+    table="aqi_observations",
+    timestamp_field="event_timestamp",
+    created_timestamp_column="created_timestamp",
 )
 
+FEATURE_TYPES = {name: Float32 for name in RAW_FEATURES + ["aqi_lag1", "aqi_lag2", "aqi_lag3", "aqi_rolling_mean"]}
+FEATURE_TYPES.update({name: Int64 for name in ["month", "day", "day_of_week"]})
 
-# Data Source
-aqi_source = FileSource(
-    path="data/forecast_dataset.parquet",
-    timestamp_field="timestamp",
-)
-
-
-# Feature View
-aqi_features = FeatureView(
-    name="aqi_features",
-    entities=[aqi],
-    ttl=timedelta(days=30),
-    schema=[
-        Field(name="city", dtype=String),
-        Field(name="latitude", dtype=Float32),
-        Field(name="longitude", dtype=Float32),
-
-        Field(name="pm10", dtype=Float32),
-        Field(name="pm2_5", dtype=Float32),
-        Field(name="carbon_monoxide", dtype=Float32),
-        Field(name="nitrogen_dioxide", dtype=Float32),
-        Field(name="sulphur_dioxide", dtype=Float32),
-        Field(name="ozone", dtype=Float32),
-        Field(name="aerosol_optical_depth", dtype=Float32),
-        Field(name="dust", dtype=Float32),
-        Field(name="uv_index", dtype=Float32),
-
-        Field(name="temperature", dtype=Float32),
-        Field(name="humidity", dtype=Float32),
-        Field(name="wind_speed", dtype=Float32),
-
-        Field(name="hour", dtype=Int64),
-        Field(name="year", dtype=Int64),
-        Field(name="month", dtype=Int64),
-        Field(name="day", dtype=Int64),
-        Field(name="day_of_week", dtype=Int64),
-
-        Field(name="aqi_lag1", dtype=Float32),
-        Field(name="aqi_lag2", dtype=Float32),
-        Field(name="aqi_lag3", dtype=Float32),
-        Field(name="aqi_rolling_mean", dtype=Float32),
-    ],
-    source=aqi_source,
+lahore_aqi_features = FeatureView(
+    name="lahore_aqi_features",
+    entities=[lahore],
+    ttl=timedelta(days=3650),
+    schema=[Field(name="aqi", dtype=Float32)] + [Field(name=name, dtype=FEATURE_TYPES[name]) for name in FEATURE_COLUMNS],
+    source=lahore_source,
     online=True,
 )

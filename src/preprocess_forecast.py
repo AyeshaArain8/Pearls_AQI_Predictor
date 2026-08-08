@@ -1,20 +1,8 @@
-"""Compatibility entry point for building canonical training features.
-
-Use this instead of the retired AOD/dust/UV preprocessing flow.
-"""
+"""Compatibility command: fetch canonical historical training rows from Feast."""
 from pathlib import Path
-import sys
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 from src.feature_contract import make_feature_rows
-from src.feature_store import load_observations
-
+from src.feature_store import historical_features
 def main():
-    rows = make_feature_rows(load_observations(), include_targets=True)
-    output = ROOT / "data" / "processed" / "forecast_dataset.csv"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    rows.to_csv(output, index=False)
-    print(f"Wrote {len(rows)} canonical Lahore training rows to {output}")
-
-if __name__ == "__main__": main()
+    rows=make_feature_rows(historical_features(),include_targets=True)
+    print(f"Feast returned {len(rows)} canonical Lahore training rows.")
+if __name__=="__main__": main()

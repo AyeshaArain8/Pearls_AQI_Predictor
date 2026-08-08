@@ -6,23 +6,19 @@ import altair as alt
 
 from src.api_fetch import get_lahore_data
 from src.predict import forecast_aqi
-from src.feature_store import load_observations
+from src.feature_store import ingest_observation
 
 st.set_page_config(page_title="Pearls Lahore AQI Predictor", page_icon="🌍", layout="wide")
 st.title("Lahore AQI Predictor")
-st.caption("Lahore, Pakistan only - OpenWeather observations, local feature store, and a versioned model registry.")
+st.caption("Lahore, Pakistan only - OpenWeather, cloud Feast Feature Store, and a separate versioned Model Registry.")
 
-try:
-    history = load_observations()
-    st.caption(f"Feature store updated: {history.timestamp.iloc[-1].strftime('%Y-%m-%d %H:%M UTC')}")
-except Exception as error:
-    st.error(f"Feature store unavailable: {error}")
-    st.stop()
+st.caption("Cloud Feast Feature Store: managed PostgreSQL offline source + Feast PostgreSQL online serving.")
 
 if st.button("Fetch current Lahore observation and forecast", type="primary"):
     try:
         observation = get_lahore_data()
-        result = forecast_aqi(observation)
+        ingest_observation(observation)
+        result = forecast_aqi()
         st.success(f"Forecast generated from model {result['model_version']}")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Current PM2.5", f"{observation['pm2_5']:.1f} µg/m³")
@@ -51,4 +47,4 @@ if st.button("Fetch current Lahore observation and forecast", type="primary"):
         st.error(f"Could not forecast safely: {error}")
 
 st.subheader("Data source and safety")
-st.write("Pollutants come from OpenWeather. The model uses only pollutants available in both historical and live data. Lag and rolling AQI features are calculated from actual prior observations in the local feature store; it will refuse to forecast when sufficient history is absent.")
+st.write("Pollutants come from OpenWeather. The dashboard writes the latest Lahore observation to the cloud Feast Feature Store, then reads the serving vector from Feast. Lag and rolling AQI features are calculated from actual prior cloud observations; it refuses to forecast when history is insufficient.")
