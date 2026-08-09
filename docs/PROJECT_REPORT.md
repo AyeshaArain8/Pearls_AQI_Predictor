@@ -2,7 +2,7 @@
 
 ## Problem and scope
 
-The deployed Feast source currently contains Lahore observations and forecasts Lahore AQI for days 1, 2, and 3. The local historical backup includes Karachi observations, but Karachi is not yet registered in the active Feast/Neon source or live collector; therefore no Karachi prediction is claimed. Supporting Karachi requires an approved, real Karachi ingestion and Feast materialization run before the same shared contract can be trained and served for that city.
+The project forecasts Lahore AQI for days 1, 2, and 3. Lahore is the only supported city in the collector, Feature Store, training data, model registry, inference path, and dashboard.
 
 ## Data and AQI methodology
 
@@ -22,7 +22,7 @@ Training retrieves historical observations through Feast, makes chronological da
 
 ## Automation and dashboard
 
-GitHub Actions runs hourly data collection and daily training with Python 3.11 and cloud secrets. Scheduled jobs use the already-registered Feast definitions and run the project modules directly; Feast definition deployment is a separate controlled operation because a remote `feast apply` can block a scheduled collection run. Streamlit shows Feast readiness, the dated three-day forecast, metrics, hazardous alerts, and SHAP output. All cloud operations require configured OpenWeather and `FEAST_POSTGRES_*` secrets.
+GitHub Actions runs hourly data collection and daily training with Python 3.11 and cloud secrets. Scheduled jobs use the already-registered Feast definitions and run the project modules directly; Feast definition deployment is a separate controlled operation because a remote `feast apply` can block a scheduled collection run. Historical Feast retrieval is batched and logs its progress so a failed batch is visible instead of appearing as a silent long-running training job. Streamlit shows Feast readiness, the dated three-day forecast, metrics, hazardous alerts, and SHAP output. All cloud operations require configured OpenWeather and `FEAST_POSTGRES_*` secrets.
 
 ## Limitations
 

@@ -45,18 +45,6 @@ jobs:
         run: |
           python -c "import os; required=['FEAST_POSTGRES_URL','FEAST_POSTGRES_HOST','FEAST_POSTGRES_PORT','FEAST_POSTGRES_DATABASE','FEAST_POSTGRES_SCHEMA','FEAST_POSTGRES_USER','FEAST_POSTGRES_PASSWORD']; missing=[x for x in required if not os.getenv(x)]; assert not missing, f'Missing Feast secrets: {missing}'"
 
-      - name: Apply Feast definitions
-        env:
-          FEAST_POSTGRES_URL: ${{ secrets.FEAST_POSTGRES_URL }}
-          FEAST_POSTGRES_HOST: ${{ secrets.FEAST_POSTGRES_HOST }}
-          FEAST_POSTGRES_PORT: ${{ secrets.FEAST_POSTGRES_PORT }}
-          FEAST_POSTGRES_DATABASE: ${{ secrets.FEAST_POSTGRES_DATABASE }}
-          FEAST_POSTGRES_SCHEMA: ${{ secrets.FEAST_POSTGRES_SCHEMA }}
-          FEAST_POSTGRES_USER: ${{ secrets.FEAST_POSTGRES_USER }}
-          FEAST_POSTGRES_PASSWORD: ${{ secrets.FEAST_POSTGRES_PASSWORD }}
-        run: |
-          feast -c feature_repo/feature_repo apply
-
       - name: Fetch Live AQI Data
         env:
           FEAST_POSTGRES_URL: ${{ secrets.FEAST_POSTGRES_URL }}

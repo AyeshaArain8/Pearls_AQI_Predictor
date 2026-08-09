@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FEAST_REPO = ROOT / "feature_repo" / "feature_repo"
 TABLE = "aqi_observations"
 VIEW = "lahore_aqi_features"
+HISTORICAL_BATCH_SIZE = 250
 
 
 def require_cloud_configuration() -> None:
@@ -136,7 +137,13 @@ def historical_features() -> pd.DataFrame:
     entities = timestamps.rename(columns={"timestamp": "event_timestamp"})
     entities["city"] = LAHORE["name"]
     fields = [f"{VIEW}:aqi"] + [f"{VIEW}:{name}" for name in RAW_FEATURES]
-    output = feast_store().get_historical_features(entity_df=entities, features=fields).to_df()
+    store = feast_store()
+    batches = []
+    for start in range(0, len(entities), HISTORICAL_BATCH_SIZE):
+        batch = entities.iloc[start:start + HISTORICAL_BATCH_SIZE]
+        print(f"Retrieving Feast historical batch {start // HISTORICAL_BATCH_SIZE + 1} for {len(batch)} Lahore rows.")
+        batches.append(store.get_historical_features(entity_df=batch, features=fields).to_df())
+    output = pd.concat(batches, ignore_index=True)
     output = output.rename(columns={"event_timestamp": "timestamp"})
     return validate_observations(output[["timestamp", "aqi", *RAW_FEATURES]].sort_values("timestamp"))
 

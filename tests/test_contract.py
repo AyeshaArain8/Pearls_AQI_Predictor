@@ -58,6 +58,23 @@ def test_lahore_schema_is_the_only_inference_schema():
     assert FEATURE_COLUMNS == RAW_FEATURES + [
         "month", "day", "day_of_week", "aqi_lag1", "aqi_lag2", "aqi_lag3", "aqi_rolling_mean",
     ]
+
+
+def test_active_paths_have_no_fake_features_or_other_city_support():
+    active = [
+        ROOT / "app.py", ROOT / "src/predict.py", ROOT / "src/predict_backup.py",
+        ROOT / "src/feature_pipeline.py", ROOT / "src/feature_store.py", ROOT / "src/train_forecast.py",
+    ]
+    source = "\n".join(path.read_text(encoding="utf-8").lower() for path in active)
+    for unsupported in ("karachi", "aerosol_optical_depth", "dust", "uv_index", "current_aqi -"):
+        assert unsupported not in source
+
+
+def test_historical_retrieval_is_batched_and_hourly_workflow_skips_apply():
+    store_source = (ROOT / "src/feature_store.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/data_pipeline.yml").read_text(encoding="utf-8")
+    assert "HISTORICAL_BATCH_SIZE" in store_source and "Retrieving Feast historical batch" in store_source
+    assert "feast -c feature_repo/feature_repo apply" not in workflow
 def test_feast_definition_uses_canonical_schema():
     definition=(ROOT/"feature_repo/feature_repo/feature_definitions.py").read_text(encoding="utf-8")
     assert "FEATURE_COLUMNS" in definition and "PostgreSQLSource" in definition and "aerosol_optical_depth" not in definition
