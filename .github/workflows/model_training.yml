@@ -3,7 +3,6 @@ name: AQI Model Training
 on:
   schedule:
     - cron: "0 0 * * *"
-
   workflow_dispatch:
 
 permissions:
@@ -11,11 +10,10 @@ permissions:
 
 jobs:
   train_model:
-
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -29,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Train Forecast Model
+      - name: Validate Feast Secrets
         env:
           FEAST_POSTGRES_URL: ${{ secrets.FEAST_POSTGRES_URL }}
           FEAST_POSTGRES_HOST: ${{ secrets.FEAST_POSTGRES_HOST }}
@@ -40,6 +38,17 @@ jobs:
           FEAST_POSTGRES_PASSWORD: ${{ secrets.FEAST_POSTGRES_PASSWORD }}
         run: |
           python -c "import os; required=['FEAST_POSTGRES_URL','FEAST_POSTGRES_HOST','FEAST_POSTGRES_PORT','FEAST_POSTGRES_DATABASE','FEAST_POSTGRES_SCHEMA','FEAST_POSTGRES_USER','FEAST_POSTGRES_PASSWORD']; missing=[x for x in required if not os.getenv(x)]; assert not missing, f'Missing Feast secrets: {missing}'"
+
+      - name: Train Forecast Model
+        env:
+          FEAST_POSTGRES_URL: ${{ secrets.FEAST_POSTGRES_URL }}
+          FEAST_POSTGRES_HOST: ${{ secrets.FEAST_POSTGRES_HOST }}
+          FEAST_POSTGRES_PORT: ${{ secrets.FEAST_POSTGRES_PORT }}
+          FEAST_POSTGRES_DATABASE: ${{ secrets.FEAST_POSTGRES_DATABASE }}
+          FEAST_POSTGRES_SCHEMA: ${{ secrets.FEAST_POSTGRES_SCHEMA }}
+          FEAST_POSTGRES_USER: ${{ secrets.FEAST_POSTGRES_USER }}
+          FEAST_POSTGRES_PASSWORD: ${{ secrets.FEAST_POSTGRES_PASSWORD }}
+        run: |
           python -m src.train_forecast
 
       - name: Upload Trained Models
@@ -47,11 +56,12 @@ jobs:
         with:
           name: trained-models
           path: models/registry/
+          if-no-files-found: error
 
       - name: Persist approved Model Registry
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add models/registry/
-          git diff --cached --quiet || git commit -m "model: register Lahore forecast version"
+          git diff --cached --quiet || git commit -m "model: register forecast model"
           git push
