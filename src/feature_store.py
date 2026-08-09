@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 from pathlib import Path
+from time import perf_counter
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FEAST_REPO = ROOT / "feature_repo" / "feature_repo"
 TABLE = "aqi_observations"
 VIEW = "lahore_aqi_features"
-HISTORICAL_BATCH_SIZE = 250
+DEFAULT_HISTORICAL_BATCH_SIZE = 250
 
 
 def require_cloud_configuration() -> None:
@@ -32,17 +33,28 @@ def require_cloud_configuration() -> None:
     if "supabase" in os.environ["FEAST_POSTGRES_HOST"].lower():
         raise RuntimeError("Supabase is not an approved Feature Store backend for this project.")
 
+def psycopg_url(database_url: str) -> str:
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
+    return database_url
+
+
 def cloud_engine():
     require_cloud_configuration()
-    database_url = os.environ["FEAST_POSTGRES_URL"]
-    if database_url.startswith("postgresql://"):
-        database_url = "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
-    return create_engine(database_url, pool_pre_ping=True)
+    return create_engine(psycopg_url(os.environ["FEAST_POSTGRES_URL"]), pool_pre_ping=True)
 
 def feast_store():
     require_cloud_configuration()
     from feast import FeatureStore
+    os.environ["FEAST_POSTGRES_URL"] = psycopg_url(os.environ["FEAST_POSTGRES_URL"])
     return FeatureStore(repo_path=str(FEAST_REPO))
+
+
+def historical_batch_size() -> int:
+    value = int(os.getenv("FEAST_HISTORICAL_BATCH_SIZE", DEFAULT_HISTORICAL_BATCH_SIZE))
+    if value < 1:
+        raise ValueError("FEAST_HISTORICAL_BATCH_SIZE must be a positive integer.")
+    return value
 
 def _raw_cloud_observations() -> pd.DataFrame:
     schema = os.getenv("FEAST_POSTGRES_SCHEMA", "public")
@@ -137,13 +149,22 @@ def historical_features() -> pd.DataFrame:
     entities = timestamps.rename(columns={"timestamp": "event_timestamp"})
     entities["city"] = LAHORE["name"]
     fields = [f"{VIEW}:aqi"] + [f"{VIEW}:{name}" for name in RAW_FEATURES]
+    batch_size = historical_batch_size()
+    total_batches = (len(entities) + batch_size - 1) // batch_size
+    retrieval_started = perf_counter()
+    print(f"Feast historical retrieval: requesting {len(entities)} Lahore rows in {total_batches} batches of up to {batch_size}.")
     store = feast_store()
     batches = []
-    for start in range(0, len(entities), HISTORICAL_BATCH_SIZE):
-        batch = entities.iloc[start:start + HISTORICAL_BATCH_SIZE]
-        print(f"Retrieving Feast historical batch {start // HISTORICAL_BATCH_SIZE + 1} for {len(batch)} Lahore rows.")
-        batches.append(store.get_historical_features(entity_df=batch, features=fields).to_df())
+    for start in range(0, len(entities), batch_size):
+        batch = entities.iloc[start:start + batch_size]
+        batch_number = start // batch_size + 1
+        batch_started = perf_counter()
+        print(f"Feast historical batch {batch_number}/{total_batches}: requesting {len(batch)} Lahore rows from {batch.event_timestamp.iloc[0]} to {batch.event_timestamp.iloc[-1]}.")
+        result = store.get_historical_features(entity_df=batch, features=fields).to_df()
+        print(f"Feast historical batch {batch_number}/{total_batches}: returned {len(result)} rows in {perf_counter() - batch_started:.1f}s.")
+        batches.append(result)
     output = pd.concat(batches, ignore_index=True)
+    print(f"Feast historical retrieval finished: {len(output)} rows returned in {perf_counter() - retrieval_started:.1f}s.")
     output = output.rename(columns={"event_timestamp": "timestamp"})
     return validate_observations(output[["timestamp", "aqi", *RAW_FEATURES]].sort_values("timestamp"))
 
