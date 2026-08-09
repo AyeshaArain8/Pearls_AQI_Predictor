@@ -56,8 +56,32 @@ def test_dashboard_and_inference_are_lahore_only():
 
 def test_lahore_schema_is_the_only_inference_schema():
     assert FEATURE_COLUMNS == RAW_FEATURES + [
-        "month", "day", "day_of_week", "aqi_lag1", "aqi_lag2", "aqi_lag3", "aqi_rolling_mean",
+        "hour", "month", "day", "day_of_week", "aqi_lag1", "aqi_lag2", "aqi_lag3", "aqi_rolling_mean",
     ]
+
+
+def test_hour_is_derived_from_timestamp():
+    frame = observations().copy()
+    frame["timestamp"] = pd.date_range("2026-01-01T05:00:00", periods=8, freq="h", tz="UTC")
+    train = make_feature_rows(frame, include_targets=True)
+    assert train["hour"].tolist() == [(5 + i) % 24 for i in range(3, 5)]
+
+    serve = latest_serving_features(
+        frame.iloc[:5],
+        {"timestamp": "2026-01-01T14:00:00Z", "aqi": 60, **{x: 1 for x in RAW_FEATURES}},
+    )
+    assert serve.iloc[0]["hour"] == 14
+
+
+def test_train_and_serve_hour_schema_match():
+    frame = observations()
+    train = make_feature_rows(frame, include_targets=True)
+    serve = latest_serving_features(
+        frame.iloc[:5],
+        {"timestamp": "2026-01-06T00:00:00Z", "aqi": 60, **{x: 1 for x in RAW_FEATURES}},
+    )
+    assert "hour" in train.columns and "hour" in serve.columns
+    assert list(train[FEATURE_COLUMNS].columns) == list(serve[FEATURE_COLUMNS].columns) == FEATURE_COLUMNS
 
 
 def test_active_paths_have_no_fake_features_or_other_city_support():
@@ -87,6 +111,34 @@ def test_cloud_feature_store_has_no_local_fallback():
 def test_model_registry_remains_separate():
     source=(ROOT/"src/model_registry.py").read_text(encoding="utf-8")
     assert "models" in source and "feast" not in source.lower()
+
+
+def test_feast_reconnects_once_on_stale_ssl_connection_then_raises_other_errors(monkeypatch):
+    from psycopg import OperationalError
+    from src import feature_store
+
+    calls = {"n": 0}
+
+    def flaky(store):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OperationalError("consuming input failed: SSL connection has been closed unexpectedly")
+        return "ok"
+
+    monkeypatch.setattr(feature_store, "feast_store", lambda: "store")
+    cache_cleared = {"called": False}
+    feature_store.feast_store.cache_clear = lambda: cache_cleared.__setitem__("called", True)
+
+    assert feature_store._with_feast_reconnect(flaky) == "ok"
+    assert calls["n"] == 2
+    assert cache_cleared["called"] is True
+
+    def always_broken(store):
+        raise ValueError("unrelated bug")
+
+    with pytest.raises(ValueError):
+        feature_store._with_feast_reconnect(always_broken)
+
 def test_model_registry_version_roundtrip(tmp_path, monkeypatch):
     from src import model_registry
     monkeypatch.setattr(model_registry, "REGISTRY", tmp_path)

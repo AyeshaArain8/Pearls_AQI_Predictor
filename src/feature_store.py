@@ -9,6 +9,7 @@ from time import perf_counter
 
 import pandas as pd
 from dotenv import load_dotenv
+from psycopg import OperationalError as PsycopgOperationalError
 from sqlalchemy import create_engine, text
 
 from src.feature_contract import (
@@ -137,6 +138,32 @@ def feast_store():
     return FeatureStore(
         repo_path=str(FEAST_REPO)
     )
+
+
+# ============================================================
+# FEAST RECONNECT-ON-STALE-CONNECTION
+#
+# feast_store() is cached for the life of the process (see above),
+# which is correct for normal operation but means a long-lived
+# Streamlit process can hold a Feast client whose underlying cloud
+# PostgreSQL connection (registry and/or online store) has since
+# been closed server-side after being idle between reruns
+# (observed as psycopg.OperationalError: "SSL connection has been
+# closed unexpectedly"). Unlike cloud_engine() above, Feast's own
+# client has no pool_pre_ping equivalent, so a dead connection is
+# only discovered when actually used. This helper runs a Feast
+# operation against the cached store and, ONLY on that specific
+# stale-connection error, clears the cache and retries once against
+# a freshly constructed FeatureStore. It does not change Feast
+# initialization otherwise and does not retry on unrelated errors.
+# ============================================================
+
+def _with_feast_reconnect(operation):
+    try:
+        return operation(feast_store())
+    except PsycopgOperationalError:
+        feast_store.cache_clear()
+        return operation(feast_store())
 
 
 # ============================================================
@@ -616,7 +643,11 @@ def ingest_observation(
 
     materialize_started = perf_counter()
 
-    store = feast_store()
+    def _materialize(store):
+        store.materialize(
+            start_date=start_date.to_pydatetime(),
+            end_date=end_date.to_pydatetime(),
+        )
 
     event_timestamp = pd.to_datetime(
         row["event_timestamp"].iloc[0],
@@ -633,10 +664,7 @@ def ingest_observation(
         + pd.Timedelta(minutes=1)
     )
 
-    store.materialize(
-        start_date=start_date.to_pydatetime(),
-        end_date=end_date.to_pydatetime(),
-    )
+    _with_feast_reconnect(_materialize)
 
     print(
         "Cloud ingestion: Feast online "
@@ -748,21 +776,22 @@ def latest_online_features() -> pd.DataFrame:
         for name in FEATURE_COLUMNS
     ]
 
-    store = feast_store()
-
-    values = (
-        store
-        .get_online_features(
-            features=fields,
-            entity_rows=[
-                {
-                    "city":
-                        LAHORE["name"]
-                }
-            ],
+    def _fetch(store):
+        return (
+            store
+            .get_online_features(
+                features=fields,
+                entity_rows=[
+                    {
+                        "city":
+                            LAHORE["name"]
+                    }
+                ],
+            )
+            .to_dict()
         )
-        .to_dict()
-    )
+
+    values = _with_feast_reconnect(_fetch)
 
     frame = pd.DataFrame(
         {
