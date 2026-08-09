@@ -41,6 +41,7 @@ jobs:
 
       - name: Train Forecast Model
         env:
+          PYTHONUNBUFFERED: "1"
           FEAST_POSTGRES_URL: ${{ secrets.FEAST_POSTGRES_URL }}
           FEAST_POSTGRES_HOST: ${{ secrets.FEAST_POSTGRES_HOST }}
           FEAST_POSTGRES_PORT: ${{ secrets.FEAST_POSTGRES_PORT }}

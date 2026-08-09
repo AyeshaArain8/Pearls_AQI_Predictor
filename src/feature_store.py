@@ -152,19 +152,21 @@ def historical_features() -> pd.DataFrame:
     batch_size = historical_batch_size()
     total_batches = (len(entities) + batch_size - 1) // batch_size
     retrieval_started = perf_counter()
-    print(f"Feast historical retrieval: requesting {len(entities)} Lahore rows in {total_batches} batches of up to {batch_size}.")
+    print(f"Feast historical retrieval: requesting {len(entities)} Lahore rows in {total_batches} batches of up to {batch_size}.", flush=True)
+    print("Feast historical retrieval: initializing Feast FeatureStore.", flush=True)
     store = feast_store()
+    print("Feast historical retrieval: Feast FeatureStore initialized.", flush=True)
     batches = []
     for start in range(0, len(entities), batch_size):
         batch = entities.iloc[start:start + batch_size]
         batch_number = start // batch_size + 1
         batch_started = perf_counter()
-        print(f"Feast historical batch {batch_number}/{total_batches}: requesting {len(batch)} Lahore rows from {batch.event_timestamp.iloc[0]} to {batch.event_timestamp.iloc[-1]}.")
+        print(f"Feast historical batch {batch_number}/{total_batches}: requesting {len(batch)} Lahore rows from {batch.event_timestamp.iloc[0]} to {batch.event_timestamp.iloc[-1]}.", flush=True)
         result = store.get_historical_features(entity_df=batch, features=fields).to_df()
-        print(f"Feast historical batch {batch_number}/{total_batches}: returned {len(result)} rows in {perf_counter() - batch_started:.1f}s.")
+        print(f"Feast historical batch {batch_number}/{total_batches}: returned {len(result)} rows in {perf_counter() - batch_started:.1f}s.", flush=True)
         batches.append(result)
     output = pd.concat(batches, ignore_index=True)
-    print(f"Feast historical retrieval finished: {len(output)} rows returned in {perf_counter() - retrieval_started:.1f}s.")
+    print(f"Feast historical retrieval finished: {len(output)} rows returned in {perf_counter() - retrieval_started:.1f}s.", flush=True)
     output = output.rename(columns={"event_timestamp": "timestamp"})
     return validate_observations(output[["timestamp", "aqi", *RAW_FEATURES]].sort_values("timestamp"))
 
