@@ -1,6 +1,6 @@
 streamlit==1.60.0
 pandas==2.3.3
-numpy==2.2.6
+numpy==1.26.4
 scikit-learn==1.7.2
 joblib==1.5.3
 requests==2.34.2
@@ -10,4 +10,4 @@ shap>=0.46,<0.48
 pytest>=8.0,<9.0
 feast[postgres]==0.48.0
 SQLAlchemy==2.0.46
-psycopg[binary]==3.2.6
+psycopg[binary]==3.2.5

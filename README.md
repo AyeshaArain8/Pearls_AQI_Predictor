@@ -36,8 +36,8 @@ Run:
 ```bash
 pip install -r requirements.txt
 feast -c feature_repo/feature_repo apply
-python src/feature_pipeline.py
-python src/train_forecast.py
+python -m src.feature_pipeline
+python -m src.train_forecast
 streamlit run app.py
 pytest -q
 ```

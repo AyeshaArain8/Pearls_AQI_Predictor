@@ -4,16 +4,10 @@ import os
 from datetime import datetime, timezone
 import requests
 from dotenv import load_dotenv
-from src.feature_contract import LAHORE, RAW_FEATURES
+from src.feature_contract import LAHORE, pm25_to_us_aqi
 
 load_dotenv()
 BASE = "https://api.openweathermap.org/data/2.5"
-
-def pm25_to_us_aqi(value: float) -> float:
-    # EPA PM2.5 breakpoints; this is a documented, deterministic derived observation.
-    for lo, hi, aqi_lo, aqi_hi in ((0,12,0,50),(12.1,35.4,51,100),(35.5,55.4,101,150),(55.5,150.4,151,200),(150.5,250.4,201,300),(250.5,500.4,301,500)):
-        if value <= hi: return round((aqi_hi-aqi_lo)/(hi-lo)*(value-lo)+aqi_lo, 1)
-    return 500.0
 
 def get_lahore_data() -> dict:
     key = os.getenv("OPENWEATHER_API_KEY") or os.getenv("API_KEY")

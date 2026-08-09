@@ -6,13 +6,25 @@ import altair as alt
 
 from src.api_fetch import get_lahore_data
 from src.predict import forecast_aqi
-from src.feature_store import ingest_observation
+from src.feature_store import cloud_observation_status, ingest_observation
 
 st.set_page_config(page_title="Pearls Lahore AQI Predictor", page_icon="🌍", layout="wide")
 st.title("Lahore AQI Predictor")
-st.caption("Lahore, Pakistan only - OpenWeather, cloud Feast Feature Store, and a separate versioned Model Registry.")
+st.caption("Supported City: Lahore")
+st.caption("OpenWeather, cloud Feast Feature Store, and a separate versioned Model Registry.")
 
 st.caption("Cloud Feast Feature Store: managed PostgreSQL offline source + Feast PostgreSQL online serving.")
+
+try:
+    store_status = cloud_observation_status()
+    st.caption(
+        f"Feast cloud history: {store_status['count']} chronological Lahore observations"
+        + (f" (latest: {store_status['latest_timestamp']})" if store_status["latest_timestamp"] else "")
+    )
+    if store_status["count"] < 30:
+        st.warning(f"Training needs {30 - store_status['count']} more genuine hourly observations.")
+except Exception as error:
+    st.warning(f"Feast status is unavailable: {error}")
 
 if st.button("Fetch current Lahore observation and forecast", type="primary"):
     try:
@@ -34,13 +46,12 @@ if st.button("Fetch current Lahore observation and forecast", type="primary"):
         st.json(result["metrics"])
         st.subheader("Explainability")
         try:
-            import shap
             from src.model_registry import load_latest
+            from src.explainability import local_feature_importance
             models, _ = load_latest()
-            explanation = shap.TreeExplainer(models["day1"])(pd.DataFrame([result["features"]]))
-            values = pd.DataFrame({"feature": explanation.feature_names, "SHAP value": explanation.values[0]}).sort_values("SHAP value", key=abs, ascending=False)
+            values = local_feature_importance(models["day1"], pd.DataFrame([result["features"]])).rename(columns={"shap_value": "SHAP value"})
             st.caption("Local explanation for tomorrow's forecast (positive values increase predicted AQI).")
-            st.bar_chart(values.set_index("feature"))
+            st.bar_chart(values.set_index("feature")[["SHAP value"]])
         except Exception as error:
             st.info(f"SHAP explanation is unavailable ({error}). Forecasting remains available.")
     except Exception as error:

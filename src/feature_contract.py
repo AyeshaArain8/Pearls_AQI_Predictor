@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Iterable
 
 import numpy as np
@@ -15,9 +16,51 @@ FEATURE_COLUMNS = RAW_FEATURES + [
 ]
 TARGET_COLUMNS = ["day1_target", "day2_target", "day3_target"]
 
+# EPA PM2.5 AQI breakpoints. This is the single target methodology used for
+# OpenWeather live observations and any explicitly approved historical backfill.
+PM25_AQI_BREAKPOINTS = (
+    (0.0, 12.0, 0, 50),
+    (12.1, 35.4, 51, 100),
+    (35.5, 55.4, 101, 150),
+    (55.5, 150.4, 151, 200),
+    (150.5, 250.4, 201, 300),
+    (250.5, 500.4, 301, 500),
+)
+
 
 class DataQualityError(ValueError):
     """Raised when data cannot safely be used for forecasting."""
+
+
+def pm25_to_us_aqi(value: float) -> float:
+    """Deterministically calculate US AQI from PM2.5, without category mapping."""
+    concentration = float(value)
+    if not math.isfinite(concentration) or concentration < 0:
+        raise DataQualityError("PM2.5 must be a finite non-negative value.")
+    for low, high, aqi_low, aqi_high in PM25_AQI_BREAKPOINTS:
+        if concentration <= high:
+            return round((aqi_high - aqi_low) * (concentration - low) / (high - low) + aqi_low, 1)
+    return 500.0
+
+
+def to_utc_naive_datetime(value):
+    """Normalize API/pandas timestamps for Neon `timestamp without time zone` columns."""
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp.tz_localize(None).to_pydatetime()
+
+
+def to_utc_datetime(value):
+    """Normalize timestamps for Neon `timestamp with time zone` columns."""
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp.to_pydatetime()
 
 
 def validate_observations(frame: pd.DataFrame, *, require_aqi: bool = True) -> pd.DataFrame:
