@@ -9,8 +9,11 @@ from time import perf_counter
 
 import pandas as pd
 from dotenv import load_dotenv
+# from psycopg import OperationalError as PsycopgOperationalError
+# from sqlalchemy import create_engine, text
 from psycopg import OperationalError as PsycopgOperationalError
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
 from src.feature_contract import (
     FEATURE_COLUMNS,
@@ -158,11 +161,29 @@ def feast_store():
 # initialization otherwise and does not retry on unrelated errors.
 # ============================================================
 
+# def _with_feast_reconnect(operation):
+#     try:
+#         return operation(feast_store())
+#     except PsycopgOperationalError:
+#         feast_store.cache_clear()
+#         return operation(feast_store())
+
 def _with_feast_reconnect(operation):
     try:
         return operation(feast_store())
-    except PsycopgOperationalError:
+
+    except (
+        PsycopgOperationalError,
+        SQLAlchemyOperationalError,
+    ):
+        print(
+            "Feast connection became stale. "
+            "Reconnecting to cloud Feast...",
+            flush=True,
+        )
+
         feast_store.cache_clear()
+
         return operation(feast_store())
 
 
