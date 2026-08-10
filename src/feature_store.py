@@ -1,19 +1,13 @@
 """Cloud-only Feast access layer. No local feature data fallback exists."""
-
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
 from dotenv import load_dotenv
-# from psycopg import OperationalError as PsycopgOperationalError
-# from sqlalchemy import create_engine, text
-from psycopg import OperationalError as PsycopgOperationalError
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
 from src.feature_contract import (
     FEATURE_COLUMNS,
@@ -26,29 +20,15 @@ from src.feature_contract import (
 
 load_dotenv()
 
-# ============================================================
-# PATHS / CONSTANTS
-# ============================================================
-
 ROOT = Path(__file__).resolve().parents[1]
-
-FEAST_REPO = (
-    ROOT
-    / "feature_repo"
-    / "feature_repo"
-)
-
+FEAST_REPO = ROOT / "feature_repo" / "feature_repo"
 TABLE = "aqi_observations"
 VIEW = "lahore_aqi_features"
 
 DEFAULT_HISTORICAL_BATCH_SIZE = 250
 
-# ============================================================
-# CLOUD CONFIGURATION
-# ============================================================
 
 def require_cloud_configuration() -> None:
-
     required = [
         "FEAST_POSTGRES_URL",
         "FEAST_POSTGRES_HOST",
@@ -59,81 +39,38 @@ def require_cloud_configuration() -> None:
         "FEAST_POSTGRES_PASSWORD",
     ]
 
-    missing = [
-        key
-        for key in required
-        if not os.getenv(key)
-    ]
+    missing = [key for key in required if not os.getenv(key)]
 
     if missing:
         raise RuntimeError(
-            f"Cloud Feast configuration missing: "
-            f"{', '.join(missing)}"
+            f"Cloud Feast configuration missing: {', '.join(missing)}"
         )
 
-    if (
-        "supabase"
-        in os.environ["FEAST_POSTGRES_HOST"].lower()
-    ):
+    if "supabase" in os.environ["FEAST_POSTGRES_HOST"].lower():
         raise RuntimeError(
-            "Supabase is not an approved "
-            "Feature Store backend for this project."
+            "Supabase is not an approved Feature Store backend for this project."
         )
 
-
-# ============================================================
-# POSTGRES URL
-# ============================================================
 
 def psycopg_url(database_url: str) -> str:
-
-    if database_url.startswith(
-        "postgresql://"
-    ):
-        return (
-            "postgresql+psycopg://"
-            + database_url.removeprefix(
-                "postgresql://"
-            )
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + database_url.removeprefix(
+            "postgresql://"
         )
 
     return database_url
 
 
-# ============================================================
-# CLOUD DATABASE ENGINE
-# ============================================================
-
 def cloud_engine():
-
     require_cloud_configuration()
 
     return create_engine(
-        psycopg_url(
-            os.environ["FEAST_POSTGRES_URL"]
-        ),
+        psycopg_url(os.environ["FEAST_POSTGRES_URL"]),
         pool_pre_ping=True,
-        pool_size=2,
-        max_overflow=2,
     )
 
 
-# ============================================================
-# FEAST STORE
-#
-# Cached so Feast is initialized only once per Python process.
-# This does NOT create local storage or change the cloud backend.
-# ============================================================
-
 def feast_store():
-    """
-    Create a fresh Feast client for each cloud operation.
-
-    Streamlit is a long-lived process, so caching the Feast client can
-    preserve stale PostgreSQL connections after the cloud connection
-    has been idle. A fresh client avoids the long SSL reconnect timeout.
-    """
-
     require_cloud_configuration()
 
     from feast import FeatureStore
@@ -142,36 +79,10 @@ def feast_store():
         os.environ["FEAST_POSTGRES_URL"]
     )
 
-    return FeatureStore(
-        repo_path=str(FEAST_REPO)
-    )
+    return FeatureStore(repo_path=str(FEAST_REPO))
 
-
-def _with_feast_reconnect(operation):
-    try:
-        return operation(feast_store())
-
-    except (
-        PsycopgOperationalError,
-        SQLAlchemyOperationalError,
-    ):
-        print(
-            'Feast connection failed/stale. '
-            'Creating a fresh cloud Feast client and retrying once...',
-            flush=True,
-        )
-
-        feast_store.cache_clear()
-
-        return operation(feast_store())
-
-
-# ============================================================
-# HISTORICAL BATCH SIZE
-# ============================================================
 
 def historical_batch_size() -> int:
-
     value = int(
         os.getenv(
             "FEAST_HISTORICAL_BATCH_SIZE",
@@ -181,24 +92,14 @@ def historical_batch_size() -> int:
 
     if value < 1:
         raise ValueError(
-            "FEAST_HISTORICAL_BATCH_SIZE "
-            "must be a positive integer."
+            "FEAST_HISTORICAL_BATCH_SIZE must be a positive integer."
         )
 
     return value
 
 
-# ============================================================
-# FULL CLOUD HISTORY
-# Used for training/status where required
-# ============================================================
-
 def _raw_cloud_observations() -> pd.DataFrame:
-
-    schema = os.getenv(
-        "FEAST_POSTGRES_SCHEMA",
-        "public",
-    )
+    schema = os.getenv("FEAST_POSTGRES_SCHEMA", "public")
 
     query = text(
         f"""
@@ -213,235 +114,73 @@ def _raw_cloud_observations() -> pd.DataFrame:
     )
 
     with cloud_engine().connect() as connection:
-
         frame = pd.read_sql(
             query,
             connection,
-            params={
-                "city": LAHORE["name"]
-            },
+            params={"city": LAHORE["name"]},
         )
 
-    if frame.empty:
-        return frame
+    return validate_observations(frame) if not frame.empty else frame
 
-    return validate_observations(frame)
-
-
-# ============================================================
-# RECENT HISTORY
-# Only the latest real observations are required for
-# aqi_lag1, aqi_lag2, aqi_lag3 and rolling mean.
-# ============================================================
-
-def _recent_cloud_observations(
-    limit: int = 3,
-) -> pd.DataFrame:
-
-    schema = os.getenv(
-        "FEAST_POSTGRES_SCHEMA",
-        "public",
-    )
-
-    query = text(
-        f"""
-        SELECT
-            event_timestamp AS timestamp,
-            aqi,
-            {", ".join(RAW_FEATURES)}
-        FROM {schema}.{TABLE}
-        WHERE city = :city
-        ORDER BY event_timestamp DESC
-        LIMIT :limit
-        """
-    )
-
-    with cloud_engine().connect() as connection:
-
-        frame = pd.read_sql(
-            query,
-            connection,
-            params={
-                "city": LAHORE["name"],
-                "limit": limit,
-            },
-        )
-
-    if frame.empty:
-        return frame
-
-    frame["timestamp"] = pd.to_datetime(
-        frame["timestamp"],
-        utc=True,
-    )
-
-    return (
-        frame
-        .sort_values("timestamp")
-        .reset_index(drop=True)
-    )
-
-
-# ============================================================
-# CHECK DUPLICATE TIMESTAMP
-# ============================================================
-
-def _observation_exists(
-    timestamp,
-) -> bool:
-
-    schema = os.getenv(
-        "FEAST_POSTGRES_SCHEMA",
-        "public",
-    )
-
-    query = text(
-        f"""
-        SELECT 1
-        FROM {schema}.{TABLE}
-        WHERE city = :city
-          AND event_timestamp = :timestamp
-        LIMIT 1
-        """
-    )
-
-    with cloud_engine().connect() as connection:
-
-        result = connection.execute(
-            query,
-            {
-                "city": LAHORE["name"],
-                "timestamp": timestamp,
-            },
-        )
-
-        return result.first() is not None
-
-
-# ============================================================
-# CLOUD STATUS
-# ============================================================
 
 def cloud_observation_status() -> dict:
-    """
-    Return the number and latest timestamp of genuine
-    Lahore observations stored in cloud PostgreSQL.
-    """
-
-    schema = os.getenv(
-        "FEAST_POSTGRES_SCHEMA",
-        "public",
-    )
-
-    query = text(
-        f"""
-        SELECT
-            COUNT(*) AS count,
-            MAX(event_timestamp) AS latest_timestamp
-        FROM {schema}.{TABLE}
-        WHERE city = :city
-        """
-    )
-
-    with cloud_engine().connect() as connection:
-
-        result = connection.execute(
-            query,
-            {
-                "city": LAHORE["name"]
-            },
-        ).mappings().one()
-
-    latest = result["latest_timestamp"]
+    """Return only genuine Lahore observations currently stored in Neon."""
+    observations = _raw_cloud_observations()
 
     return {
-        "count": int(
-            result["count"] or 0
+        "count": len(observations),
+        "chronological": (
+            observations.empty
+            or observations["timestamp"].is_monotonic_increasing
         ),
-        "chronological": True,
         "latest_timestamp": (
             None
-            if latest is None
-            else pd.Timestamp(
-                latest
-            ).isoformat()
+            if observations.empty
+            else observations["timestamp"].iloc[-1].isoformat()
         ),
     }
 
 
-# ============================================================
-# UNIQUE INDEX
-# ============================================================
-
-def ensure_observation_uniqueness(
-    connection,
-) -> None:
-
-    schema = os.environ[
-        "FEAST_POSTGRES_SCHEMA"
-    ]
+def ensure_observation_uniqueness(connection) -> None:
+    """Create the idempotency guard used by live collection and approved backfills."""
+    schema = os.environ["FEAST_POSTGRES_SCHEMA"]
 
     connection.execute(
         text(
-            f"""
-            CREATE UNIQUE INDEX IF NOT EXISTS
-            {TABLE}_city_event_timestamp_key
-            ON {schema}.{TABLE}
-            (city, event_timestamp)
-            """
+            f"CREATE UNIQUE INDEX IF NOT EXISTS "
+            f"{TABLE}_city_event_timestamp_key "
+            f"ON {schema}.{TABLE} (city, event_timestamp)"
         )
     )
 
 
-# ============================================================
-# CONFLICT-SAFE INSERT
-# ============================================================
-
-def insert_observations_conflict_safe(
-    rows: pd.DataFrame,
-) -> int:
-
+def insert_observations_conflict_safe(rows: pd.DataFrame) -> int:
+    """Insert rows into Neon once; duplicate city/timestamp rows are skipped."""
     if rows.empty:
         return 0
 
-    schema = os.environ[
-        "FEAST_POSTGRES_SCHEMA"
-    ]
-
+    schema = os.environ["FEAST_POSTGRES_SCHEMA"]
     columns = list(rows.columns)
 
     placeholders = ", ".join(
-        f":{column}"
-        for column in columns
+        f":{column}" for column in columns
     )
 
     statement = text(
-        f"""
-        INSERT INTO {schema}.{TABLE}
-        ({", ".join(columns)})
-        VALUES ({placeholders})
-        ON CONFLICT
-        (city, event_timestamp)
-        DO NOTHING
-        """
+        f"INSERT INTO {schema}.{TABLE} "
+        f"({', '.join(columns)}) "
+        f"VALUES ({placeholders}) "
+        f"ON CONFLICT (city, event_timestamp) DO NOTHING"
     )
 
     records = (
         rows.astype(object)
-        .where(
-            pd.notna(rows),
-            None,
-        )
-        .to_dict(
-            orient="records"
-        )
+        .where(pd.notna(rows), None)
+        .to_dict(orient="records")
     )
 
     with cloud_engine().begin() as connection:
-
-        ensure_observation_uniqueness(
-            connection
-        )
+        ensure_observation_uniqueness(connection)
 
         result = connection.execute(
             statement,
@@ -451,31 +190,20 @@ def insert_observations_conflict_safe(
     return result.rowcount or 0
 
 
-# ============================================================
-# BUILD LIVE OBSERVATION
-# ============================================================
-
 def build_live_observation_row(
     history: pd.DataFrame,
     observation: dict,
 ) -> pd.DataFrame:
+    """Build one insert-ready row using only prior chronological Lahore AQI values.
 
+    This is deliberately fail-closed: a live event is never inserted with
+    placeholder lag values when there are fewer than three real predecessors.
     """
-    Build one Lahore observation using only genuine
-    prior cloud observations.
-
-    No fake lag values are generated.
-    """
-
     candidate = pd.DataFrame(
         [
             {
                 key: observation[key]
-                for key in [
-                    "timestamp",
-                    "aqi",
-                    *RAW_FEATURES,
-                ]
+                for key in ["timestamp", "aqi", *RAW_FEATURES]
             }
         ]
     )
@@ -490,286 +218,103 @@ def build_live_observation_row(
         candidate.iloc[0].to_dict(),
     )
 
-    lag_columns = [
-        "aqi_lag1",
-        "aqi_lag2",
-        "aqi_lag3",
-        "aqi_rolling_mean",
-    ]
-
-    if (
-        serving.loc[
-            :,
-            lag_columns,
-        ]
-        .isna()
-        .any(axis=None)
-    ):
-
+    if serving.loc[
+        :,
+        [
+            "aqi_lag1",
+            "aqi_lag2",
+            "aqi_lag3",
+            "aqi_rolling_mean",
+        ],
+    ].isna().any(axis=None):
         raise ValueError(
-            "Live observation has insufficient "
-            "real prior AQI history for lag features."
+            "Live observation has insufficient real prior AQI history "
+            "for lag features."
         )
 
     row = candidate.rename(
-        columns={
-            "timestamp": "event_timestamp"
-        }
+        columns={"timestamp": "event_timestamp"}
     ).copy()
 
-    row["event_timestamp"] = (
-        row["event_timestamp"]
-        .map(to_utc_datetime)
+    row["event_timestamp"] = row["event_timestamp"].map(
+        to_utc_datetime
     )
 
-    row["created_timestamp"] = (
-        to_utc_datetime(
-            pd.Timestamp.now(
-                tz="UTC"
-            )
-        )
+    row["created_timestamp"] = to_utc_datetime(
+        pd.Timestamp.now(tz="UTC")
     )
 
     row["city"] = LAHORE["name"]
 
     for column in FEATURE_COLUMNS:
-
-        row[column] = (
-            serving.iloc[0][column]
-        )
+        row[column] = serving.iloc[0][column]
 
     return row
 
 
-# ============================================================
-# LIVE INGESTION
-# ============================================================
-
-def ingest_observation(
-    observation: dict,
-) -> pd.DataFrame:
-
-    """
-    Persist one Lahore observation remotely,
-    calculate real lag features and update Feast
-    online serving.
-
-    Only recent cloud history is loaded.
-    """
-
-    if (
-        observation.get("city")
-        != LAHORE["name"]
-    ):
-
+def ingest_observation(observation: dict) -> pd.DataFrame:
+    """Persist a Lahore observation remotely, then materialize it into Feast online serving."""
+    if observation.get("city") != LAHORE["name"]:
         raise ValueError(
-            "Only Lahore observations "
-            "may enter the Feature Store."
+            "Only Lahore observations may enter the Feature Store."
         )
 
-    # --------------------------------------------------------
-    # Prepare timestamp
-    # --------------------------------------------------------
+    history = _raw_cloud_observations()
 
-    candidate_timestamp = pd.to_datetime(
-        observation["timestamp"],
+    candidate = pd.DataFrame(
+        [
+            {
+                key: observation[key]
+                for key in ["timestamp", "aqi", *RAW_FEATURES]
+            }
+        ]
+    )
+
+    candidate["timestamp"] = pd.to_datetime(
+        candidate["timestamp"],
         utc=True,
     )
 
-    # --------------------------------------------------------
-    # Duplicate check
-    # --------------------------------------------------------
-
-    if _observation_exists(
-        candidate_timestamp
+    if (
+        not history.empty
+        and candidate["timestamp"].iloc[0]
+        in set(history["timestamp"])
     ):
-
-        return pd.DataFrame(
-            [
-                {
-                    "event_timestamp":
-                        candidate_timestamp,
-                    "city":
-                        LAHORE["name"],
-                    "aqi":
-                        observation["aqi"],
-                }
-            ]
+        return candidate.rename(
+            columns={"timestamp": "event_timestamp"}
         )
-
-    # --------------------------------------------------------
-    # Load only the latest real history
-    # --------------------------------------------------------
-
-    history_started = perf_counter()
-
-    history = _recent_cloud_observations(
-        limit=3
-    )
-
-    print(
-        "Cloud ingestion: loaded "
-        f"{len(history)} recent Lahore "
-        "observations in "
-        f"{perf_counter() - history_started:.2f}s.",
-        flush=True,
-    )
-
-    # --------------------------------------------------------
-    # Build real lag features
-    # --------------------------------------------------------
 
     row = build_live_observation_row(
         history,
         observation,
     )
 
-    # --------------------------------------------------------
-    # Insert into cloud PostgreSQL
-    # --------------------------------------------------------
-
-    inserted = (
-        insert_observations_conflict_safe(
-            row
-        )
-    )
+    inserted = insert_observations_conflict_safe(row)
 
     if not inserted:
         return row
 
-    # --------------------------------------------------------
-    # Feast online materialization
-    # --------------------------------------------------------
+    store = feast_store()
 
-    materialize_started = perf_counter()
-
-    def _materialize(store):
-        store.materialize(
-            start_date=start_date.to_pydatetime(),
-            end_date=end_date.to_pydatetime(),
-        )
-
-    event_timestamp = pd.to_datetime(
-        row["event_timestamp"].iloc[0],
-        utc=True,
-    )
-
-    start_date = (
-        event_timestamp
-        - pd.Timedelta(minutes=1)
-    )
-
-    end_date = (
-        event_timestamp
-        + pd.Timedelta(minutes=1)
-    )
-
-    _with_feast_reconnect(_materialize)
-
-    print(
-        "Cloud ingestion: Feast online "
-        "materialization completed in "
-        f"{perf_counter() - materialize_started:.2f}s.",
-        flush=True,
+    store.materialize_incremental(
+        end_date=pd.Timestamp.now(tz="UTC").to_pydatetime()
     )
 
     return row
 
 
-# ============================================================
-# HISTORICAL FEATURES FOR TRAINING
-# ============================================================
-
-# def historical_features() -> pd.DataFrame:
-
-#     """
-#     Load genuine chronological Lahore history directly
-#     from indexed cloud PostgreSQL.
-
-#     Training derives lag and rolling features afterward
-#     through the shared feature contract.
-#     """
-
-#     retrieval_started = perf_counter()
-
-#     print(
-#         "Cloud historical retrieval: loading "
-#         "Lahore observations directly from "
-#         "indexed PostgreSQL.",
-#         flush=True,
-#     )
-
-#     schema = os.getenv(
-#         "FEAST_POSTGRES_SCHEMA",
-#         "public",
-#     )
-
-#     query = text(
-#         f"""
-#         SELECT
-#             event_timestamp AS timestamp,
-#             aqi,
-#             {", ".join(RAW_FEATURES)}
-#         FROM {schema}.{TABLE}
-#         WHERE city = :city
-#         ORDER BY event_timestamp
-#         """
-#     )
-
-#     with cloud_engine().connect() as connection:
-
-#         output = pd.read_sql(
-#             query,
-#             connection,
-#             params={
-#                 "city": LAHORE["name"]
-#             },
-#         )
-
-#     if output.empty:
-#         return output
-
-#     output["timestamp"] = pd.to_datetime(
-#         output["timestamp"],
-#         utc=True,
-#     )
-
-#     output = (
-#         output
-#         .sort_values("timestamp")
-#         .reset_index(drop=True)
-#     )
-
-#     output = validate_observations(
-#         output
-#     )
-
-#     print(
-#         "Cloud historical retrieval: "
-#         f"returned {len(output)} Lahore rows "
-#         f"in {perf_counter() - retrieval_started:.2f}s.",
-#         flush=True,
-#     )
-
-#     return output[
-#         [
-#             "timestamp",
-#             "aqi",
-#             *RAW_FEATURES,
-#         ]
-#     ]
-
 def historical_features() -> pd.DataFrame:
-    """
-    Retrieve genuine chronological Lahore history through Feast
-    historical retrieval, in bounded batches.
-    """
+    """Load genuine chronological Lahore history from cloud PostgreSQL.
 
+    Training uses the indexed cloud source directly instead of Feast's
+    expensive point-in-time historical join. Real lag and rolling features
+    are derived afterward by the shared feature contract.
+    """
     retrieval_started = perf_counter()
 
     print(
-        "Cloud historical retrieval: preparing Lahore observations "
-        "for Feast historical retrieval.",
+        "Cloud historical retrieval: loading Lahore observations "
+        "directly from indexed PostgreSQL.",
         flush=True,
     )
 
@@ -781,8 +326,9 @@ def historical_features() -> pd.DataFrame:
     query = text(
         f"""
         SELECT
-            city,
-            event_timestamp AS timestamp
+            event_timestamp AS timestamp,
+            aqi,
+            {", ".join(RAW_FEATURES)}
         FROM {schema}.{TABLE}
         WHERE city = :city
         ORDER BY event_timestamp
@@ -790,84 +336,14 @@ def historical_features() -> pd.DataFrame:
     )
 
     with cloud_engine().connect() as connection:
-        entity_df = pd.read_sql(
+        output = pd.read_sql(
             query,
             connection,
-            params={
-                "city": LAHORE["name"],
-            },
+            params={"city": LAHORE["name"]},
         )
 
-    if entity_df.empty:
-        return entity_df
-
-    entity_df["timestamp"] = pd.to_datetime(
-        entity_df["timestamp"],
-        utc=True,
-    )
-
-    entity_df = (
-        entity_df
-        .sort_values("timestamp")
-        .reset_index(drop=True)
-    )
-
-    batch_size = historical_batch_size()
-
-    fields = [
-        f"{VIEW}:{name}"
-        for name in FEATURE_COLUMNS
-    ]
-
-    batches = []
-
-    for start in range(
-        0,
-        len(entity_df),
-        batch_size,
-    ):
-        batch = entity_df.iloc[
-            start:start + batch_size
-        ].copy()
-
-        print(
-            "Retrieving Feast historical batch "
-            f"{start // batch_size + 1} "
-            f"({len(batch)} rows).",
-            flush=True,
-        )
-
-        def _retrieve(store):
-            return (
-                store
-                .get_historical_features(
-                    entity_df=batch,
-                    features=fields,
-                )
-                .to_df()
-            )
-
-        batch_output = _with_feast_reconnect(
-            _retrieve
-        )
-
-        if not batch_output.empty:
-            batches.append(batch_output)
-
-    if not batches:
-        return pd.DataFrame()
-
-    output = pd.concat(
-        batches,
-        ignore_index=True,
-    )
-
-    if "event_timestamp" in output.columns:
-        output = output.rename(
-            columns={
-                "event_timestamp": "timestamp"
-            }
-        )
+    if output.empty:
+        return output
 
     output["timestamp"] = pd.to_datetime(
         output["timestamp"],
@@ -877,84 +353,51 @@ def historical_features() -> pd.DataFrame:
     output = (
         output
         .sort_values("timestamp")
-        .drop_duplicates(
-            subset=["timestamp"],
-            keep="last",
-        )
         .reset_index(drop=True)
     )
 
-    output = validate_observations(
-        output
-    )
+    output = validate_observations(output)
 
     print(
-        "Cloud historical retrieval: Feast returned "
+        f"Cloud historical retrieval: returned "
         f"{len(output)} Lahore rows in "
         f"{perf_counter() - retrieval_started:.2f}s.",
         flush=True,
     )
 
     return output[
-        [
-            "timestamp",
-            "aqi",
-            *RAW_FEATURES,
-        ]
+        ["timestamp", "aqi", *RAW_FEATURES]
     ]
 
-# ============================================================
-# FEAST ONLINE FEATURES
-# ============================================================
 
 def latest_online_features() -> pd.DataFrame:
-
-    """
-    Retrieve the latest real serving vector
-    from the remote Feast PostgreSQL online store.
-    """
-
+    """Retrieve the latest serving vector from the remote Feast online store."""
     fields = [
         f"{VIEW}:{name}"
         for name in FEATURE_COLUMNS
     ]
 
-    def _fetch(store):
-        return (
-            store
-            .get_online_features(
-                features=fields,
-                entity_rows=[
-                    {
-                        "city":
-                            LAHORE["name"]
-                    }
-                ],
-            )
-            .to_dict()
-        )
-
-    values = _with_feast_reconnect(_fetch)
+    values = feast_store().get_online_features(
+        features=fields,
+        entity_rows=[
+            {
+                "city": LAHORE["name"]
+            }
+        ],
+    ).to_dict()
 
     frame = pd.DataFrame(
         {
-            name: values.get(
-                name,
-                [None],
-            )[0]
+            name: values.get(name, [None])[0]
             for name in FEATURE_COLUMNS
         },
         index=[0],
     )
 
     if frame.isna().any(axis=None):
-
         raise ValueError(
-            "Feast online store has insufficient "
-            "real history to serve all lag features."
+            "Feast online store has insufficient real history "
+            "to serve all lag features."
         )
 
-    return frame.loc[
-        :,
-        FEATURE_COLUMNS,
-    ]
+    return frame.loc[:, FEATURE_COLUMNS]
