@@ -1,0 +1,54 @@
+{
+  "city": "Lahore",
+  "schema_version": "lahore-aqi-v2",
+  "feature_columns": [
+    "pm10",
+    "pm2_5",
+    "carbon_monoxide",
+    "nitrogen_dioxide",
+    "sulphur_dioxide",
+    "ozone",
+    "month",
+    "day",
+    "day_of_week",
+    "aqi_lag1",
+    "aqi_lag2",
+    "aqi_lag3",
+    "aqi_rolling_mean"
+  ],
+  "target_columns": [
+    "day1_target",
+    "day2_target",
+    "day3_target"
+  ],
+  "training_rows": 1796,
+  "test_rows": 450,
+  "training_end": "2026-01-19T22:00:00+00:00",
+  "metrics": {
+    "day1": {
+      "rmse": 10.90799791075145,
+      "mae": 7.2190595533108874,
+      "r2": 0.9382749690098774
+    },
+    "day2": {
+      "rmse": 17.897564961450616,
+      "mae": 13.466177819972213,
+      "r2": 0.8297963363224029
+    },
+    "day3": {
+      "rmse": 26.54544660358005,
+      "mae": 20.486195967505758,
+      "r2": 0.6202608568212049
+    }
+  },
+  "data_source": "Feast cloud PostgreSQL historical retrieval",
+  "model_type": "RandomForestRegressor",
+  "trained_at": "2026-08-10T01:16:43.971135+00:00",
+  "horizons": [
+    "day1",
+    "day2",
+    "day3"
+  ],
+  "version": "20260810T011643Z",
+  "approved": true
+}
