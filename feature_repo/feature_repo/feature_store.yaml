@@ -1,28 +1,25 @@
 project: pearls_lahore_aqi
 provider: local
 entity_key_serialization_version: 2
-
 registry:
   registry_type: sql
-  path: ${FEAST_POSTGRES_URL}
+  path: postgresql+psycopg://neondb_owner:npg_zNX08BImnFQs@ep-solitary-block-ay5h0riv.c-5.us-east-2.aws.neon.tech:5432/neondb?sslmode=require
   cache_ttl_seconds: 60
-
 offline_store:
   type: postgres
-  host: ${FEAST_POSTGRES_HOST}
+  host: ep-solitary-block-ay5h0riv.c-5.us-east-2.aws.neon.tech
   port: 5432
-  database: ${FEAST_POSTGRES_DATABASE}
-  db_schema: ${FEAST_POSTGRES_SCHEMA}
-  user: ${FEAST_POSTGRES_USER}
-  password: ${FEAST_POSTGRES_PASSWORD}
+  database: neondb
+  db_schema: public
+  user: neondb_owner
+  password: npg_zNX08BImnFQs
   sslmode: require
-
 online_store:
   type: postgres
-  host: ${FEAST_POSTGRES_HOST}
+  host: ep-solitary-block-ay5h0riv.c-5.us-east-2.aws.neon.tech
   port: 5432
-  database: ${FEAST_POSTGRES_DATABASE}
-  db_schema: ${FEAST_POSTGRES_SCHEMA}
-  user: ${FEAST_POSTGRES_USER}
-  password: ${FEAST_POSTGRES_PASSWORD}
+  database: neondb
+  db_schema: public
+  user: neondb_owner
+  password: npg_zNX08BImnFQs
   sslmode: require

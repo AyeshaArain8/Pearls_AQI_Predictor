@@ -125,48 +125,27 @@ def cloud_engine():
 # This does NOT create local storage or change the cloud backend.
 # ============================================================
 
-@lru_cache(maxsize=1)
 def feast_store():
+    """
+    Create a fresh Feast client for each cloud operation.
+
+    Streamlit is a long-lived process, so caching the Feast client can
+    preserve stale PostgreSQL connections after the cloud connection
+    has been idle. A fresh client avoids the long SSL reconnect timeout.
+    """
 
     require_cloud_configuration()
 
     from feast import FeatureStore
 
-    os.environ["FEAST_POSTGRES_URL"] = (
-        psycopg_url(
-            os.environ["FEAST_POSTGRES_URL"]
-        )
+    os.environ["FEAST_POSTGRES_URL"] = psycopg_url(
+        os.environ["FEAST_POSTGRES_URL"]
     )
 
     return FeatureStore(
         repo_path=str(FEAST_REPO)
     )
 
-
-# ============================================================
-# FEAST RECONNECT-ON-STALE-CONNECTION
-#
-# feast_store() is cached for the life of the process (see above),
-# which is correct for normal operation but means a long-lived
-# Streamlit process can hold a Feast client whose underlying cloud
-# PostgreSQL connection (registry and/or online store) has since
-# been closed server-side after being idle between reruns
-# (observed as psycopg.OperationalError: "SSL connection has been
-# closed unexpectedly"). Unlike cloud_engine() above, Feast's own
-# client has no pool_pre_ping equivalent, so a dead connection is
-# only discovered when actually used. This helper runs a Feast
-# operation against the cached store and, ONLY on that specific
-# stale-connection error, clears the cache and retries once against
-# a freshly constructed FeatureStore. It does not change Feast
-# initialization otherwise and does not retry on unrelated errors.
-# ============================================================
-
-# def _with_feast_reconnect(operation):
-#     try:
-#         return operation(feast_store())
-#     except PsycopgOperationalError:
-#         feast_store.cache_clear()
-#         return operation(feast_store())
 
 def _with_feast_reconnect(operation):
     try:
@@ -177,8 +156,8 @@ def _with_feast_reconnect(operation):
         SQLAlchemyOperationalError,
     ):
         print(
-            "Feast connection became stale. "
-            "Reconnecting to cloud Feast...",
+            'Feast connection failed/stale. '
+            'Creating a fresh cloud Feast client and retrying once...',
             flush=True,
         )
 
@@ -701,22 +680,96 @@ def ingest_observation(
 # HISTORICAL FEATURES FOR TRAINING
 # ============================================================
 
+# def historical_features() -> pd.DataFrame:
+
+#     """
+#     Load genuine chronological Lahore history directly
+#     from indexed cloud PostgreSQL.
+
+#     Training derives lag and rolling features afterward
+#     through the shared feature contract.
+#     """
+
+#     retrieval_started = perf_counter()
+
+#     print(
+#         "Cloud historical retrieval: loading "
+#         "Lahore observations directly from "
+#         "indexed PostgreSQL.",
+#         flush=True,
+#     )
+
+#     schema = os.getenv(
+#         "FEAST_POSTGRES_SCHEMA",
+#         "public",
+#     )
+
+#     query = text(
+#         f"""
+#         SELECT
+#             event_timestamp AS timestamp,
+#             aqi,
+#             {", ".join(RAW_FEATURES)}
+#         FROM {schema}.{TABLE}
+#         WHERE city = :city
+#         ORDER BY event_timestamp
+#         """
+#     )
+
+#     with cloud_engine().connect() as connection:
+
+#         output = pd.read_sql(
+#             query,
+#             connection,
+#             params={
+#                 "city": LAHORE["name"]
+#             },
+#         )
+
+#     if output.empty:
+#         return output
+
+#     output["timestamp"] = pd.to_datetime(
+#         output["timestamp"],
+#         utc=True,
+#     )
+
+#     output = (
+#         output
+#         .sort_values("timestamp")
+#         .reset_index(drop=True)
+#     )
+
+#     output = validate_observations(
+#         output
+#     )
+
+#     print(
+#         "Cloud historical retrieval: "
+#         f"returned {len(output)} Lahore rows "
+#         f"in {perf_counter() - retrieval_started:.2f}s.",
+#         flush=True,
+#     )
+
+#     return output[
+#         [
+#             "timestamp",
+#             "aqi",
+#             *RAW_FEATURES,
+#         ]
+#     ]
+
 def historical_features() -> pd.DataFrame:
-
     """
-    Load genuine chronological Lahore history directly
-    from indexed cloud PostgreSQL.
-
-    Training derives lag and rolling features afterward
-    through the shared feature contract.
+    Retrieve genuine chronological Lahore history through Feast
+    historical retrieval, in bounded batches.
     """
 
     retrieval_started = perf_counter()
 
     print(
-        "Cloud historical retrieval: loading "
-        "Lahore observations directly from "
-        "indexed PostgreSQL.",
+        "Cloud historical retrieval: preparing Lahore observations "
+        "for Feast historical retrieval.",
         flush=True,
     )
 
@@ -728,9 +781,8 @@ def historical_features() -> pd.DataFrame:
     query = text(
         f"""
         SELECT
-            event_timestamp AS timestamp,
-            aqi,
-            {", ".join(RAW_FEATURES)}
+            city,
+            event_timestamp AS timestamp
         FROM {schema}.{TABLE}
         WHERE city = :city
         ORDER BY event_timestamp
@@ -738,17 +790,84 @@ def historical_features() -> pd.DataFrame:
     )
 
     with cloud_engine().connect() as connection:
-
-        output = pd.read_sql(
+        entity_df = pd.read_sql(
             query,
             connection,
             params={
-                "city": LAHORE["name"]
+                "city": LAHORE["name"],
             },
         )
 
-    if output.empty:
-        return output
+    if entity_df.empty:
+        return entity_df
+
+    entity_df["timestamp"] = pd.to_datetime(
+        entity_df["timestamp"],
+        utc=True,
+    )
+
+    entity_df = (
+        entity_df
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+
+    batch_size = historical_batch_size()
+
+    fields = [
+        f"{VIEW}:{name}"
+        for name in FEATURE_COLUMNS
+    ]
+
+    batches = []
+
+    for start in range(
+        0,
+        len(entity_df),
+        batch_size,
+    ):
+        batch = entity_df.iloc[
+            start:start + batch_size
+        ].copy()
+
+        print(
+            "Retrieving Feast historical batch "
+            f"{start // batch_size + 1} "
+            f"({len(batch)} rows).",
+            flush=True,
+        )
+
+        def _retrieve(store):
+            return (
+                store
+                .get_historical_features(
+                    entity_df=batch,
+                    features=fields,
+                )
+                .to_df()
+            )
+
+        batch_output = _with_feast_reconnect(
+            _retrieve
+        )
+
+        if not batch_output.empty:
+            batches.append(batch_output)
+
+    if not batches:
+        return pd.DataFrame()
+
+    output = pd.concat(
+        batches,
+        ignore_index=True,
+    )
+
+    if "event_timestamp" in output.columns:
+        output = output.rename(
+            columns={
+                "event_timestamp": "timestamp"
+            }
+        )
 
     output["timestamp"] = pd.to_datetime(
         output["timestamp"],
@@ -758,6 +877,10 @@ def historical_features() -> pd.DataFrame:
     output = (
         output
         .sort_values("timestamp")
+        .drop_duplicates(
+            subset=["timestamp"],
+            keep="last",
+        )
         .reset_index(drop=True)
     )
 
@@ -766,9 +889,9 @@ def historical_features() -> pd.DataFrame:
     )
 
     print(
-        "Cloud historical retrieval: "
-        f"returned {len(output)} Lahore rows "
-        f"in {perf_counter() - retrieval_started:.2f}s.",
+        "Cloud historical retrieval: Feast returned "
+        f"{len(output)} Lahore rows in "
+        f"{perf_counter() - retrieval_started:.2f}s.",
         flush=True,
     )
 
@@ -779,7 +902,6 @@ def historical_features() -> pd.DataFrame:
             *RAW_FEATURES,
         ]
     ]
-
 
 # ============================================================
 # FEAST ONLINE FEATURES
