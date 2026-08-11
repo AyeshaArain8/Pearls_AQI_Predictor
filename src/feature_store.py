@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
 from dotenv import load_dotenv
+from psycopg import OperationalError
 from sqlalchemy import create_engine, text
 
 from src.feature_contract import (
@@ -70,6 +72,7 @@ def cloud_engine():
     )
 
 
+@lru_cache(maxsize=1)
 def feast_store():
     require_cloud_configuration()
 
@@ -80,6 +83,31 @@ def feast_store():
     )
 
     return FeatureStore(repo_path=str(FEAST_REPO))
+
+
+def _with_feast_reconnect(operation):
+    """Run ``operation(store)`` against the cached Feast store.
+
+    Neon closes idle SSL connections after a while, which surfaces as a
+    ``psycopg.OperationalError`` on the next call through a stale cached
+    store. When that specific error happens, clear the cached store once
+    and retry with a fresh connection instead of letting the whole
+    request fail. Any other error (or a second failure after reconnect)
+    is raised as-is.
+    """
+
+    store = feast_store()
+
+    try:
+        return operation(store)
+    except OperationalError as error:
+        if "ssl" not in str(error).lower():
+            raise
+
+        feast_store.cache_clear()
+        store = feast_store()
+
+        return operation(store)
 
 
 def historical_batch_size() -> int:
@@ -294,10 +322,10 @@ def ingest_observation(observation: dict) -> pd.DataFrame:
     if not inserted:
         return row
 
-    store = feast_store()
-
-    store.materialize_incremental(
-        end_date=pd.Timestamp.now(tz="UTC").to_pydatetime()
+    _with_feast_reconnect(
+        lambda store: store.materialize_incremental(
+            end_date=pd.Timestamp.now(tz="UTC").to_pydatetime()
+        )
     )
 
     return row
@@ -309,6 +337,10 @@ def historical_features() -> pd.DataFrame:
     Training uses the indexed cloud source directly instead of Feast's
     expensive point-in-time historical join. Real lag and rolling features
     are derived afterward by the shared feature contract.
+
+    Retrieval is done in HISTORICAL_BATCH_SIZE-sized pages (instead of one
+    unbounded query) so a failing/slow batch is visible in the logs and
+    memory use stays bounded as history grows.
     """
     retrieval_started = perf_counter()
 
@@ -323,6 +355,10 @@ def historical_features() -> pd.DataFrame:
         "public",
     )
 
+    batch_size = historical_batch_size()
+    offset = 0
+    batches = []
+
     query = text(
         f"""
         SELECT
@@ -332,15 +368,42 @@ def historical_features() -> pd.DataFrame:
         FROM {schema}.{TABLE}
         WHERE city = :city
         ORDER BY event_timestamp
+        LIMIT :limit OFFSET :offset
         """
     )
 
-    with cloud_engine().connect() as connection:
-        output = pd.read_sql(
-            query,
-            connection,
-            params={"city": LAHORE["name"]},
+    while True:
+        with cloud_engine().connect() as connection:
+            batch = pd.read_sql(
+                query,
+                connection,
+                params={
+                    "city": LAHORE["name"],
+                    "limit": batch_size,
+                    "offset": offset,
+                },
+            )
+
+        if batch.empty:
+            break
+
+        print(
+            f"Retrieving Feast historical batch: "
+            f"offset={offset}, rows={len(batch)}.",
+            flush=True,
         )
+
+        batches.append(batch)
+        offset += batch_size
+
+        if len(batch) < batch_size:
+            break
+
+    output = (
+        pd.concat(batches, ignore_index=True)
+        if batches
+        else pd.DataFrame(columns=["timestamp", "aqi", *RAW_FEATURES])
+    )
 
     if output.empty:
         return output
@@ -377,14 +440,17 @@ def latest_online_features() -> pd.DataFrame:
         for name in FEATURE_COLUMNS
     ]
 
-    values = feast_store().get_online_features(
-        features=fields,
-        entity_rows=[
-            {
-                "city": LAHORE["name"]
-            }
-        ],
-    ).to_dict()
+    def _fetch(store):
+        return store.get_online_features(
+            features=fields,
+            entity_rows=[
+                {
+                    "city": LAHORE["name"]
+                }
+            ],
+        ).to_dict()
+
+    values = _with_feast_reconnect(_fetch)
 
     frame = pd.DataFrame(
         {

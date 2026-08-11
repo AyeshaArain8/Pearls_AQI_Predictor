@@ -1,14 +1,23 @@
-"""Lahore inference from Feast online serving and the versioned Model Registry."""
+"""Lahore inference from cloud history and the versioned Model Registry.
 
-from datetime import datetime, timedelta, timezone
+NOTE: this now builds the DAILY feature vector fresh from cloud history,
+using the exact same resample_daily() + make_daily_feature_rows() contract
+that training uses, instead of reading Feast's online store (which still
+holds an hourly-shaped vector). This keeps train and serve aligned on the
+same "1/2/3 calendar days ahead" definition.
+"""
 
+from datetime import datetime, timezone
+import pandas as pd
 from src.feature_contract import (
     FEATURE_COLUMNS,
     LAHORE,
     SCHEMA_VERSION,
     assert_feature_schema,
+    resample_daily,
+    make_daily_feature_rows,
 )
-from src.feature_store import latest_online_features
+from src.feature_store import historical_features
 from src.model_registry import load_latest
 
 
@@ -32,7 +41,7 @@ def get_category(aqi: float) -> str:
 
 
 def forecast_aqi(city: str = LAHORE["name"]) -> dict:
-    """Generate a three-day Lahore AQI forecast."""
+    """Generate a three-day (24h/48h/72h) Lahore AQI forecast."""
 
     if city != LAHORE["name"]:
         raise ValueError(
@@ -45,16 +54,26 @@ def forecast_aqi(city: str = LAHORE["name"]) -> dict:
     if metadata.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             "Registered model schema is incompatible "
-            "with Feast serving schema."
+            "with the current feature contract."
         )
 
     assert_feature_schema(
         metadata.get("feature_columns", [])
     )
 
-    # Read the latest real feature vector from Feast.
-    features = latest_online_features()
+    # Build today's real daily feature vector fresh from cloud history,
+    # the same way training built its rows.
+    history = historical_features()
+    daily_history = resample_daily(history)
+    daily_rows = make_daily_feature_rows(daily_history, include_targets=False)
 
+    if daily_rows.empty:
+        raise ValueError(
+            "Not enough consecutive daily Lahore history yet to build "
+            "a real daily feature vector."
+        )
+
+    features = daily_rows.iloc[[-1]][list(FEATURE_COLUMNS)]
     assert_feature_schema(features.columns)
 
     observed_at = datetime.now(timezone.utc)
@@ -71,8 +90,8 @@ def forecast_aqi(city: str = LAHORE["name"]) -> dict:
         forecasts.append(
             {
                 "date": (
-                    observed_at
-                    + timedelta(days=index)
+                    daily_rows["timestamp"].iloc[-1]
+                    + pd.Timedelta(days=index)
                 ).date().isoformat(),
                 "aqi": aqi,
                 "category": get_category(aqi),
@@ -84,6 +103,7 @@ def forecast_aqi(city: str = LAHORE["name"]) -> dict:
         "city": city,
         "model_version": metadata["version"],
         "observed_at": observed_at.isoformat(),
+        "last_daily_observation": daily_rows["timestamp"].iloc[-1].isoformat(),
         "forecasts": forecasts,
         "metrics": metadata.get("metrics", {}),
         "features": features.iloc[0].to_dict(),

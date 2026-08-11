@@ -3,23 +3,23 @@ provider: local
 entity_key_serialization_version: 2
 registry:
   registry_type: sql
-  path: postgresql+psycopg://neondb_owner:npg_zNX08BImnFQs@ep-solitary-block-ay5h0riv.c-5.us-east-2.aws.neon.tech:5432/neondb?sslmode=require
+  path: ${FEAST_POSTGRES_URL}
   cache_ttl_seconds: 60
 offline_store:
   type: postgres
-  host: ep-solitary-block-ay5h0riv.c-5.us-east-2.aws.neon.tech
+  host: ${FEAST_POSTGRES_HOST}
   port: 5432
-  database: neondb
+  database: ${FEAST_POSTGRES_DATABASE}
   db_schema: public
-  user: neondb_owner
-  password: npg_zNX08BImnFQs
+  user: ${FEAST_POSTGRES_USER}
+  password: ${FEAST_POSTGRES_PASSWORD}
   sslmode: require
 online_store:
   type: postgres
-  host: ep-solitary-block-ay5h0riv.c-5.us-east-2.aws.neon.tech
+  host: ${FEAST_POSTGRES_HOST}
   port: 5432
-  database: neondb
+  database: ${FEAST_POSTGRES_DATABASE}
   db_schema: public
-  user: neondb_owner
-  password: npg_zNX08BImnFQs
+  user: ${FEAST_POSTGRES_USER}
+  password: ${FEAST_POSTGRES_PASSWORD}
   sslmode: require

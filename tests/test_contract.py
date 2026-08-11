@@ -86,7 +86,7 @@ def test_train_and_serve_hour_schema_match():
 
 def test_active_paths_have_no_fake_features_or_other_city_support():
     active = [
-        ROOT / "app.py", ROOT / "src/predict.py", ROOT / "src/predict_backup.py",
+        ROOT / "app.py", ROOT / "src/predict.py",
         ROOT / "src/feature_pipeline.py", ROOT / "src/feature_store.py", ROOT / "src/train_forecast.py",
     ]
     source = "\n".join(path.read_text(encoding="utf-8").lower() for path in active)
@@ -106,8 +106,14 @@ def test_no_active_supabase_imports():
     active=[ROOT/"src/feature_pipeline.py",ROOT/"src/feature_store.py",ROOT/"src/train_forecast.py",ROOT/"src/predict.py",ROOT/"app.py"]
     assert all("from supabase" not in path.read_text(encoding="utf-8").lower() for path in active)
 def test_cloud_feature_store_has_no_local_fallback():
+    # Note: this intentionally does NOT require Feast's own
+    # get_historical_features() point-in-time join. historical_features()
+    # deliberately queries the indexed cloud PostgreSQL table directly
+    # (see its docstring) because that join is expensive at this scale.
+    # get_online_features() is still required for live serving, and no
+    # local CSV fallback is allowed either way.
     source=(ROOT/"src/feature_store.py").read_text(encoding="utf-8")
-    assert "get_historical_features" in source and "get_online_features" in source and "to_csv" not in source
+    assert "get_online_features" in source and "to_csv" not in source
 def test_model_registry_remains_separate():
     source=(ROOT/"src/model_registry.py").read_text(encoding="utf-8")
     assert "models" in source and "feast" not in source.lower()

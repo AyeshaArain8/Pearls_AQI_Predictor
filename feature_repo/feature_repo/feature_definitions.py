@@ -60,16 +60,6 @@ FEATURE_TYPES = {
     ]
 }
 
-# FEATURE_TYPES.update(
-#     {
-#         name: Int64
-#         for name in [
-#             "month",
-#             "day",
-#             "day_of_week",
-#         ]
-#     }
-# )
 FEATURE_TYPES.update(
     {
         name: Int64
@@ -81,6 +71,7 @@ FEATURE_TYPES.update(
         ]
     }
 )
+
 
 # ---------------------------------------------------------
 # Feast Feature View

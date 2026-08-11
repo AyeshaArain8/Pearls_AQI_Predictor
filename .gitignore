@@ -25,4 +25,14 @@ Thumbs.db
 # MLflow local files
 mlflow.db
 mlartifacts/
+# Local test artifacts
+.pytest_tmp/
+.pytest_cache/
+
+# Local backups / temporary environments
+src/predict_backup.py
+venv_CODEX_3_12_BROKEN/
+
+# Old generated model versions
+models/registry/20260810T180130Z/
 
