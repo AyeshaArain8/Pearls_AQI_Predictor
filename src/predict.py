@@ -108,3 +108,4 @@ def forecast_aqi(city: str = LAHORE["name"]) -> dict:
         "metrics": metadata.get("metrics", {}),
         "features": features.iloc[0].to_dict(),
     }
+
