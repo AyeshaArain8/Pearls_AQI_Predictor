@@ -1,38 +1,4 @@
 """Controlled OpenWeather Lahore historical backfill.
-
-This module:
-
-- Fetches genuine Lahore historical OpenWeather air-pollution observations.
-- Validates pollutant values using the existing project contract.
-- Detects duplicate and missing hourly timestamps.
-- Reads existing cloud history using the project's read-only helper.
-- Merges cloud history + candidate backfill rows in memory.
-- Computes lag/rolling features only across genuinely consecutive hours.
-- Never fabricates or interpolates missing observations.
-- Reports daily-row impact using the existing daily pipeline.
-- Prepares rows in the Feast-compatible schema.
-- Defaults to DRY RUN.
-- Supports an explicit --apply for the reviewed payload.
-- Uses the existing conflict-safe Neon insertion helper.
-- Does not train or register a model.
-- Does not modify models/registry/.
-- Does not modify latest.json.
-- Does not modify reports/.
-- Does not modify app.py.
-
-Default run:
-
-    python -m src.openweather_historical_backfill
-
-Apply after reviewing the dry-run:
-
-    python -m src.openweather_historical_backfill --apply
-
-Optional date range:
-
-    python -m src.openweather_historical_backfill \
-        --start 2026-02-05T00:00:00Z \
-        --end 2026-08-08T13:00:00Z
 """
 
 from __future__ import annotations

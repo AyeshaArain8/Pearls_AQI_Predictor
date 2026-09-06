@@ -1,10 +1,5 @@
 """Lahore inference from cloud history and the versioned Model Registry.
 
-NOTE: this now builds the DAILY feature vector fresh from cloud history,
-using the exact same resample_daily() + make_daily_feature_rows() contract
-that training uses, instead of reading Feast's online store (which still
-holds an hourly-shaped vector). This keeps train and serve aligned on the
-same "1/2/3 calendar days ahead" definition.
 """
 
 from datetime import datetime, timezone
