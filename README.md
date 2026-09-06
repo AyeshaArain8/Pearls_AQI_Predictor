@@ -585,7 +585,7 @@ The project includes tests covering important areas such as:
 ---
 
 ## Production Deployment
-
+for live demo....
 The Streamlit dashboard is deployed using Streamlit Community Cloud and is connected to the GitHub repository.
 
 The production application is:
@@ -668,6 +668,10 @@ Additional project documentation is available under:
 docs/
 reports/
 ```
+and also in root
+root folder
+Final Project Report pdf
+Final Project Report docx
 
 The repository also contains the final project report and EDA outputs documenting the development and evaluation process.
 
@@ -692,34 +696,6 @@ The system addresses the major project requirements:
 * [x] Automated testing
 * [x] Cloud deployment
 * [x] Detailed project documentation
-
----
-
-## Limitations
-
-Forecast quality depends on the amount, continuity, and quality of real historical observations available for Lahore.
-
-A model may produce a negative R² for an individual forecast horizon. This is reported honestly as part of evaluation and does not mean that the metric has been hidden or replaced with a fabricated score.
-
-The system is intended as a forecasting and monitoring project rather than an official government air-quality monitoring service.
-
----
-
-## Future Improvements
-
-Potential future improvements include:
-
-* Longer verified Lahore historical coverage
-* Additional model experimentation
-* More extensive hyperparameter optimization
-* Better long-horizon forecasting accuracy
-* Model-retention and registry-pruning policies
-* Persistent global SHAP reporting for CI runs
-* More comprehensive monitoring and drift detection
-* Improved cloud-query performance as the dataset grows
-* Additional verified Lahore environmental sources
-
-These improvements should only be introduced when they remain consistent with the project's data-integrity and feature-contract requirements.
 
 ---
 
