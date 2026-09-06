@@ -3,7 +3,7 @@
 🚀 Live Demo: https://ayesha-aqi-predictor.streamlit.app/
 
 👉 Open Lahore AQI Predictor — Live Streamlit Dashboard
-> **Note:** The application is deployed on Streamlit Community Cloud. On some initial loads, the Streamlit hosting service may temporarily return an error. If this happens, please click the **“Fetch Current Lahore observation and forcast button — ”** button/link again. The dashboard loads successfully and displays the live AQI data once the deployment is available.
+> **Note:** The application is deployed on Streamlit Community Cloud. On some initial loads, the Streamlit hosting service may temporarily return an error. If this happens, please click the **“Fetch Current Lahore observation and forecast button — ”** button/link again. The dashboard loads successfully and displays the live AQI data once the deployment is available.
 
 
 An end-to-end machine learning and MLOps system for forecasting **Lahore's Air Quality Index (AQI)** for the next **24, 48, and 72 hours** using real environmental observations, cloud-based feature storage, a versioned model registry, automated pipelines, explainable AI, and an interactive Streamlit dashboard.
