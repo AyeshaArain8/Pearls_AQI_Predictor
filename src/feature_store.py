@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
@@ -27,7 +28,8 @@ FEAST_REPO = ROOT / "feature_repo" / "feature_repo"
 TABLE = "aqi_observations"
 VIEW = "lahore_aqi_features"
 
-DEFAULT_HISTORICAL_BATCH_SIZE = 250
+DEFAULT_HISTORICAL_BATCH_SIZE = 5000
+LIVE_INGESTION_HISTORY_ROWS = 10
 
 
 def require_cloud_configuration() -> None:
@@ -63,7 +65,9 @@ def psycopg_url(database_url: str) -> str:
     return database_url
 
 
+@lru_cache(maxsize=1)
 def cloud_engine():
+    """Return one cached SQLAlchemy engine for the process."""
     require_cloud_configuration()
 
     return create_engine(
@@ -74,6 +78,7 @@ def cloud_engine():
 
 @lru_cache(maxsize=1)
 def feast_store():
+    """Return one cached Feast FeatureStore for the process."""
     require_cloud_configuration()
 
     from feast import FeatureStore
@@ -86,16 +91,7 @@ def feast_store():
 
 
 def _with_feast_reconnect(operation):
-    """Run ``operation(store)`` against the cached Feast store.
-
-    Neon closes idle SSL connections after a while, which surfaces as a
-    ``psycopg.OperationalError`` on the next call through a stale cached
-    store. When that specific error happens, clear the cached store once
-    and retry with a fresh connection instead of letting the whole
-    request fail. Any other error (or a second failure after reconnect)
-    is raised as-is.
-    """
-
+    """Run an operation against the cached Feast store."""
     store = feast_store()
 
     try:
@@ -127,6 +123,7 @@ def historical_batch_size() -> int:
 
 
 def _raw_cloud_observations() -> pd.DataFrame:
+    """Load the complete chronological Lahore history."""
     schema = os.getenv("FEAST_POSTGRES_SCHEMA", "public")
 
     query = text(
@@ -151,8 +148,45 @@ def _raw_cloud_observations() -> pd.DataFrame:
     return validate_observations(frame) if not frame.empty else frame
 
 
+def _recent_cloud_observations(
+    limit: int = LIVE_INGESTION_HISTORY_ROWS,
+) -> pd.DataFrame:
+    """Load only the recent Lahore rows required for live feature creation."""
+    schema = os.getenv("FEAST_POSTGRES_SCHEMA", "public")
+
+    query = text(
+        f"""
+        SELECT
+            event_timestamp AS timestamp,
+            aqi,
+            {", ".join(RAW_FEATURES)}
+        FROM {schema}.{TABLE}
+        WHERE city = :city
+        ORDER BY event_timestamp DESC
+        LIMIT :limit
+        """
+    )
+
+    with cloud_engine().connect() as connection:
+        frame = pd.read_sql(
+            query,
+            connection,
+            params={
+                "city": LAHORE["name"],
+                "limit": limit,
+            },
+        )
+
+    if frame.empty:
+        return frame
+
+    frame = frame.sort_values("timestamp").reset_index(drop=True)
+
+    return validate_observations(frame)
+
+
 def cloud_observation_status() -> dict:
-    """Return only genuine Lahore observations currently stored in Neon."""
+    """Return genuine Lahore observations currently stored in Neon."""
     observations = _raw_cloud_observations()
 
     return {
@@ -170,7 +204,7 @@ def cloud_observation_status() -> dict:
 
 
 def ensure_observation_uniqueness(connection) -> None:
-    """Create the idempotency guard used by live collection and approved backfills."""
+    """Create the idempotency guard for live observations and backfills."""
     schema = os.environ["FEAST_POSTGRES_SCHEMA"]
 
     connection.execute(
@@ -183,7 +217,7 @@ def ensure_observation_uniqueness(connection) -> None:
 
 
 def insert_observations_conflict_safe(rows: pd.DataFrame) -> int:
-    """Insert rows into Neon once; duplicate city/timestamp rows are skipped."""
+    """Insert rows into Neon; duplicate city/timestamp rows are skipped."""
     if rows.empty:
         return 0
 
@@ -222,11 +256,7 @@ def build_live_observation_row(
     history: pd.DataFrame,
     observation: dict,
 ) -> pd.DataFrame:
-    """Build one insert-ready row using only prior chronological Lahore AQI values.
-
-    This is deliberately fail-closed: a live event is never inserted with
-    placeholder lag values when there are fewer than three real predecessors.
-    """
+    """Build one insert-ready row using genuine prior Lahore observations."""
     candidate = pd.DataFrame(
         [
             {
@@ -281,13 +311,22 @@ def build_live_observation_row(
 
 
 def ingest_observation(observation: dict) -> pd.DataFrame:
-    """Persist a Lahore observation remotely, then materialize it into Feast online serving."""
+    """Persist a Lahore observation, then materialize it into Feast online serving."""
     if observation.get("city") != LAHORE["name"]:
         raise ValueError(
             "Only Lahore observations may enter the Feature Store."
         )
 
-    history = _raw_cloud_observations()
+    stage_started = perf_counter()
+
+    history = _recent_cloud_observations()
+
+    print(
+        f"Cloud/Feast ingestion: recent-history query "
+        f"(limit={LIVE_INGESTION_HISTORY_ROWS}) returned {len(history)} "
+        f"row(s) in {perf_counter() - stage_started:.2f}s.",
+        flush=True,
+    )
 
     candidate = pd.DataFrame(
         [
@@ -312,36 +351,52 @@ def ingest_observation(observation: dict) -> pd.DataFrame:
             columns={"timestamp": "event_timestamp"}
         )
 
+    stage_started = perf_counter()
+
     row = build_live_observation_row(
         history,
         observation,
     )
 
+    print(
+        f"Cloud/Feast ingestion: serving-row construction took "
+        f"{perf_counter() - stage_started:.2f}s.",
+        flush=True,
+    )
+
+    stage_started = perf_counter()
+
     inserted = insert_observations_conflict_safe(row)
+
+    print(
+        f"Cloud/Feast ingestion: PostgreSQL insert took "
+        f"{perf_counter() - stage_started:.2f}s.",
+        flush=True,
+    )
 
     if not inserted:
         return row
 
+    stage_started = perf_counter()
+
     _with_feast_reconnect(
         lambda store: store.materialize_incremental(
-            end_date=pd.Timestamp.now(tz="UTC").to_pydatetime()
+            end_date=pd.Timestamp.now(tz="UTC").to_pydatetime(),
+            feature_views=[VIEW],
         )
+    )
+
+    print(
+        f"Cloud/Feast ingestion: store.materialize_incremental() took "
+        f"{perf_counter() - stage_started:.2f}s.",
+        flush=True,
     )
 
     return row
 
 
 def historical_features() -> pd.DataFrame:
-    """Load genuine chronological Lahore history from cloud PostgreSQL.
-
-    Training uses the indexed cloud source directly instead of Feast's
-    expensive point-in-time historical join. Real lag and rolling features
-    are derived afterward by the shared feature contract.
-
-    Retrieval is done in HISTORICAL_BATCH_SIZE-sized pages (instead of one
-    unbounded query) so a failing/slow batch is visible in the logs and
-    memory use stays bounded as history grows.
-    """
+    """Load genuine chronological Lahore history from cloud PostgreSQL."""
     retrieval_started = perf_counter()
 
     print(
@@ -356,7 +411,6 @@ def historical_features() -> pd.DataFrame:
     )
 
     batch_size = historical_batch_size()
-    offset = 0
     batches = []
 
     query = text(
@@ -367,42 +421,60 @@ def historical_features() -> pd.DataFrame:
             {", ".join(RAW_FEATURES)}
         FROM {schema}.{TABLE}
         WHERE city = :city
+          AND event_timestamp > :after
         ORDER BY event_timestamp
-        LIMIT :limit OFFSET :offset
+        LIMIT :limit
         """
     )
 
-    while True:
-        with cloud_engine().connect() as connection:
+    after = datetime.min.replace(
+        tzinfo=timezone.utc
+    )
+
+    with cloud_engine().connect() as connection:
+        while True:
             batch = pd.read_sql(
                 query,
                 connection,
                 params={
                     "city": LAHORE["name"],
+                    "after": after,
                     "limit": batch_size,
-                    "offset": offset,
                 },
             )
 
-        if batch.empty:
-            break
+            if batch.empty:
+                break
 
-        print(
-            f"Retrieving Feast historical batch: "
-            f"offset={offset}, rows={len(batch)}.",
-            flush=True,
-        )
+            print(
+                f"Retrieving Feast historical batch: "
+                f"after={after.isoformat()}, rows={len(batch)}.",
+                flush=True,
+            )
 
-        batches.append(batch)
-        offset += batch_size
+            batches.append(batch)
 
-        if len(batch) < batch_size:
-            break
+            after = pd.to_datetime(
+                batch["timestamp"].iloc[-1],
+                utc=True,
+            ).to_pydatetime()
+
+            if len(batch) < batch_size:
+                break
 
     output = (
-        pd.concat(batches, ignore_index=True)
+        pd.concat(
+            batches,
+            ignore_index=True,
+        )
         if batches
-        else pd.DataFrame(columns=["timestamp", "aqi", *RAW_FEATURES])
+        else pd.DataFrame(
+            columns=[
+                "timestamp",
+                "aqi",
+                *RAW_FEATURES,
+            ]
+        )
     )
 
     if output.empty:
@@ -434,7 +506,7 @@ def historical_features() -> pd.DataFrame:
 
 
 def latest_online_features() -> pd.DataFrame:
-    """Retrieve the latest serving vector from the remote Feast online store."""
+    """Retrieve the latest serving vector from Feast online store."""
     fields = [
         f"{VIEW}:{name}"
         for name in FEATURE_COLUMNS

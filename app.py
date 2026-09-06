@@ -1,10 +1,7 @@
-import json
-from pathlib import Path
-from time import perf_counter
-
 import streamlit as st
 import pandas as pd
 import altair as alt
+from time import perf_counter
 
 from src.api_fetch import get_lahore_data
 from src.predict import forecast_aqi
@@ -30,37 +27,16 @@ st.caption(
 
 # ---------------------------------------------------------
 # Cached cloud status
-# Prevent a full PostgreSQL history query on every rerun.
+# This is intentionally NOT called during initial page load.
+# It runs only after the user clicks the forecast button.
 # ---------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def get_cached_cloud_status():
     return cloud_observation_status()
 
 
-try:
-    store_status = get_cached_cloud_status()
-
-    st.caption(
-        f"Feast cloud history: {store_status['count']} chronological Lahore observations"
-        + (
-            f" (latest: {store_status['latest_timestamp']})"
-            if store_status["latest_timestamp"]
-            else ""
-        )
-    )
-
-    if store_status["count"] < 30:
-        st.warning(
-            f"Training needs {30 - store_status['count']} "
-            "more genuine hourly observations."
-        )
-
-except Exception as error:
-    st.warning(f"Feast status is unavailable: {error}")
-
-
 # ---------------------------------------------------------
-# Forecast
+# Main action
 # ---------------------------------------------------------
 if st.button(
     "Fetch current Lahore observation and forecast",
@@ -74,7 +50,9 @@ if st.button(
         # 1. OpenWeather
         # -------------------------------------------------
         started = perf_counter()
+
         observation = get_lahore_data()
+
         st.write(
             f"OpenWeather fetch: {perf_counter() - started:.2f}s"
         )
@@ -83,20 +61,23 @@ if st.button(
         # 2. Cloud PostgreSQL + Feast
         # -------------------------------------------------
         started = perf_counter()
+
         ingest_observation(observation)
+
         st.write(
             f"Cloud/Feast ingestion: {perf_counter() - started:.2f}s"
         )
 
-        # Clear cached status because a new observation
-        # has just been inserted.
+        # New observation was inserted, so refresh cached status.
         get_cached_cloud_status.clear()
 
         # -------------------------------------------------
         # 3. Forecast
         # -------------------------------------------------
         started = perf_counter()
+
         result = forecast_aqi()
+
         st.write(
             f"Forecast/model/online features: "
             f"{perf_counter() - started:.2f}s"
@@ -107,6 +88,9 @@ if st.button(
             f"{result['model_version']}"
         )
 
+        # -------------------------------------------------
+        # Current observation metrics
+        # -------------------------------------------------
         c1, c2, c3, c4 = st.columns(4)
 
         c1.metric(
@@ -139,9 +123,12 @@ if st.button(
         st.dataframe(
             forecast[["date", "aqi", "category"]],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
+        # -------------------------------------------------
+        # Forecast chart
+        # -------------------------------------------------
         st.altair_chart(
             alt.Chart(forecast)
             .mark_line(point=True)
@@ -150,9 +137,12 @@ if st.button(
                 y="aqi:Q",
                 tooltip=["date", "aqi", "category"],
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
+        # -------------------------------------------------
+        # Hazardous alert
+        # -------------------------------------------------
         if forecast.hazardous.any():
             st.error(
                 "Hazardous AQI alert: at least one forecast "
@@ -166,7 +156,7 @@ if st.button(
         st.json(result["metrics"])
 
         # -------------------------------------------------
-        # SHAP
+        # SHAP explainability
         # -------------------------------------------------
         st.subheader("Explainability")
 
@@ -205,6 +195,38 @@ if st.button(
                 "Forecasting remains available."
             )
 
+        # -------------------------------------------------
+        # Cloud status
+        # Loaded only AFTER forecast processing.
+        # This prevents it from delaying the initial UI.
+        # -------------------------------------------------
+        try:
+            store_status = get_cached_cloud_status()
+
+            st.caption(
+                f"Feast cloud history: "
+                f"{store_status['count']} chronological Lahore observations"
+                + (
+                    f" (latest: {store_status['latest_timestamp']})"
+                    if store_status["latest_timestamp"]
+                    else ""
+                )
+            )
+
+            if store_status["count"] < 30:
+                st.warning(
+                    f"Training needs {30 - store_status['count']} "
+                    "more genuine hourly observations."
+                )
+
+        except Exception as error:
+            st.warning(
+                f"Feast status is unavailable: {error}"
+            )
+
+        # -------------------------------------------------
+        # Total time
+        # -------------------------------------------------
         st.success(
             f"Total forecast time: "
             f"{perf_counter() - total_started:.2f}s"
@@ -216,6 +238,9 @@ if st.button(
         )
 
 
+# ---------------------------------------------------------
+# Data source and safety
+# ---------------------------------------------------------
 st.subheader("Data source and safety")
 
 st.write(
