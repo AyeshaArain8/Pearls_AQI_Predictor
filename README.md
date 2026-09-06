@@ -1,5 +1,8 @@
 # Pearls Lahore AQI Predictor
 
+🚀 Live Demo: https://ayesha-aqi-predictor.streamlit.app/
+
+👉 Open Lahore AQI Predictor — Live Streamlit Dashboard
 An end-to-end machine learning and MLOps system for forecasting **Lahore's Air Quality Index (AQI)** for the next **24, 48, and 72 hours** using real environmental observations, cloud-based feature storage, a versioned model registry, automated pipelines, explainable AI, and an interactive Streamlit dashboard.
 
 ## Project Overview
@@ -473,6 +476,25 @@ Pearls_AQI_Predictor/
 | Version Control      | Git / GitHub                        |
 
 ---
+## Production Deployment
+
+The Streamlit dashboard is deployed using Streamlit Community Cloud and is connected to the GitHub repository.
+
+The production application is available at:
+
+```text
+https://ayesha-aqi-predictor.streamlit.app/
+```
+
+The live dashboard provides the production AQI forecasting interface for Lahore, including current air-quality conditions, three-day forecasts, model metrics, SHAP-based explainability, and safety alerts.
+
+GitHub updates to the `main` branch can trigger an automatic Streamlit redeployment.
+
+The production deployment requires the appropriate Streamlit secrets for:
+
+* OpenWeather
+* Managed PostgreSQL / Feast
+
 
 ## Local Setup
 
@@ -585,23 +607,6 @@ The project includes tests covering important areas such as:
 * Pipeline contracts
 
 ---
-
-## Production Deployment
-for live demo....
-The Streamlit dashboard is deployed using Streamlit Community Cloud and is connected to the GitHub repository.
-
-The production application is:
-
-```text
-https://ayesha-aqi-predictor.streamlit.app/
-```
-
-GitHub updates to the `main` branch can trigger an automatic Streamlit redeployment.
-
-The production deployment requires the appropriate Streamlit secrets for:
-
-* OpenWeather
-* Managed PostgreSQL / Feast
 
 ---
 
