@@ -447,6 +447,8 @@ Pearls_AQI_Predictor/
 ├── tests/
 │
 ├── app.py
+|__ FINAL_PROJECT_REPORT.docx
+|__ FINAL_PROJECT_REPORT.pdf
 ├── requirements.txt
 └── README.md
 ```
