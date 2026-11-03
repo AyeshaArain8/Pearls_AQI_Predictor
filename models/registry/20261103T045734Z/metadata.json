@@ -1,0 +1,99 @@
+{
+  "city": "Lahore",
+  "schema_version": "lahore-aqi-v2",
+  "feature_columns": [
+    "pm10",
+    "pm2_5",
+    "carbon_monoxide",
+    "nitrogen_dioxide",
+    "sulphur_dioxide",
+    "ozone",
+    "hour",
+    "month",
+    "day",
+    "day_of_week",
+    "aqi_lag1",
+    "aqi_lag2",
+    "aqi_lag3",
+    "aqi_rolling_mean"
+  ],
+  "target_columns": [
+    "day1_target",
+    "day2_target",
+    "day3_target"
+  ],
+  "training_rows": 280,
+  "test_rows": 70,
+  "training_end": "2026-08-22T00:00:00+00:00",
+  "metrics": {
+    "day1": {
+      "rmse": 17.29385070341511,
+      "mae": 14.081459128587552,
+      "r2": 0.49640354370489725
+    },
+    "day2": {
+      "rmse": 23.918659789882735,
+      "mae": 19.750386324994867,
+      "r2": 0.044908088670604474
+    },
+    "day3": {
+      "rmse": 26.518915789425705,
+      "mae": 22.351265114900162,
+      "r2": -0.14635920791940493
+    }
+  },
+  "candidate_metrics": {
+    "day1": {
+      "RandomForestRegressor": {
+        "rmse": 17.29385070341511,
+        "mae": 14.081459128587552,
+        "r2": 0.49640354370489725
+      },
+      "Ridge": {
+        "rmse": 22.149278618908287,
+        "mae": 19.039561390480152,
+        "r2": 0.17392700107500192
+      }
+    },
+    "day2": {
+      "RandomForestRegressor": {
+        "rmse": 23.918659789882735,
+        "mae": 19.750386324994867,
+        "r2": 0.044908088670604474
+      },
+      "Ridge": {
+        "rmse": 26.01085723351741,
+        "mae": 22.74658290619116,
+        "r2": -0.12948590208752697
+      }
+    },
+    "day3": {
+      "RandomForestRegressor": {
+        "rmse": 26.518915789425705,
+        "mae": 22.351265114900162,
+        "r2": -0.14635920791940493
+      },
+      "Ridge": {
+        "rmse": 26.735680722376422,
+        "mae": 23.648083102779886,
+        "r2": -0.1651764217296654
+      }
+    }
+  },
+  "selected_models": {
+    "day1": "RandomForestRegressor",
+    "day2": "RandomForestRegressor",
+    "day3": "RandomForestRegressor"
+  },
+  "data_source": "Feast cloud PostgreSQL historical retrieval, resampled to one row per calendar day",
+  "forecast_granularity": "daily (day1=+24h, day2=+48h, day3=+72h)",
+  "model_type": "per-horizon best model from RandomForestRegressor and Ridge",
+  "trained_at": "2026-11-03T04:57:34.521122+00:00",
+  "horizons": [
+    "day1",
+    "day2",
+    "day3"
+  ],
+  "version": "20261103T045734Z",
+  "approved": true
+}
